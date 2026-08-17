@@ -57,6 +57,7 @@ var defaultModelRatio = map[string]float64{
 	"gpt-4.1-nano":                              0.05, // $0.1 / 1M tokens
 	"gpt-4.1-nano-2025-04-14":                   0.05, // $0.1 / 1M tokens
 	"gpt-image-1":                               2.5,  // $5 / 1M tokens
+	"gpt-image-2":                               2.5,
 	"o1":                                        7.5,  // $15 / 1M tokens
 	"o1-2024-12-17":                             7.5,  // $15 / 1M tokens
 	"o1-preview":                                7.5,  // $15 / 1M tokens
@@ -97,6 +98,7 @@ var defaultModelRatio = map[string]float64{
 	"gpt-5-nano":                                0.025,
 	"gpt-5-nano-2025-08-07":                     0.025,
 	"gpt-5.5":                                   2.5, // $5 / 1M tokens
+	"gpt-5.6":                                   2.5,
 	"gpt-5.6-sol":                               2.5,
 	"gpt-5.6-terra":                             1.25,
 	"gpt-5.6-luna":                              0.5,
@@ -273,6 +275,9 @@ var defaultModelPrice = map[string]float64{
 	"suno_music":                     0.1,
 	"suno_lyrics":                    0.01,
 	"dall-e-3":                       0.04,
+	"gpt-image-1":                    0.04,
+	"gpt-image-1.5":                  0.04,
+	"gpt-image-2":                    0.04,
 	"imagen-3.0-generate-002":        0.03,
 	"black-forest-labs/flux-1.1-pro": 0.04,
 	"gpt-4-gizmo-*":                  0.1,
@@ -637,6 +642,7 @@ func ModelRatio2JSONString() string {
 
 var defaultImageRatio = map[string]float64{
 	"gpt-image-1": 2,
+	"gpt-image-2": 2,
 }
 var imageRatioMap = types.NewRWMap[string, float64]()
 var audioRatioMap = types.NewRWMap[string, float64]()

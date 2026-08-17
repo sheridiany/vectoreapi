@@ -299,7 +299,16 @@ func AddToken(c *gin.Context) {
 		})
 		return
 	}
-	if token.Group == "auto" {
+	enterprisePolicy, err := service.GetUserEnterpriseTokenGroupPolicy(c.GetInt("id"))
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if enterprisePolicy == model.EnterpriseTokenGroupAuto {
+		token.Group = model.EnterpriseTokenGroupAuto
+		token.CrossGroupRetry = true
+		_ = token.SetAutoGroups(nil)
+	} else if token.Group == "auto" {
 		if !setTokenAutoGroups(c, &token, request.AutoGroups.Groups) {
 			return
 		}
@@ -397,6 +406,11 @@ func UpdateToken(c *gin.Context) {
 	if statusOnly != "" {
 		cleanToken.Status = token.Status
 	} else {
+		enterprisePolicy, err := service.GetUserEnterpriseTokenGroupPolicy(userId)
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
 		// If you add more fields, please also update token.Update()
 		cleanToken.Name = token.Name
 		cleanToken.ExpiredTime = token.ExpiredTime
@@ -407,7 +421,11 @@ func UpdateToken(c *gin.Context) {
 		cleanToken.AllowIps = token.AllowIps
 		cleanToken.Group = token.Group
 		cleanToken.CrossGroupRetry = token.CrossGroupRetry
-		if token.Group != "auto" {
+		if enterprisePolicy == model.EnterpriseTokenGroupAuto {
+			cleanToken.Group = model.EnterpriseTokenGroupAuto
+			cleanToken.CrossGroupRetry = true
+			_ = cleanToken.SetAutoGroups(nil)
+		} else if token.Group != "auto" {
 			cleanToken.CrossGroupRetry = false
 			_ = cleanToken.SetAutoGroups(nil)
 		} else if request.AutoGroups.Set {

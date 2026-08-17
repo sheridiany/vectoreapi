@@ -29,7 +29,12 @@ func setupDashboardAuthMiddlewareTest(t *testing.T) {
 	previousSecret := common.SessionSecret
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}))
+	require.NoError(t, db.AutoMigrate(
+		&model.User{},
+		&model.UserSession{},
+		&model.Enterprise{},
+		&model.EnterpriseMembership{},
+	))
 	model.DB = db
 	common.SetMainDatabaseType(common.DatabaseTypeSQLite)
 	common.RedisEnabled = false

@@ -30,7 +30,7 @@ import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 
 import { useOAuthLogin } from '../hooks/use-oauth-login'
-import type { SystemStatus } from '../types'
+import type { EnterpriseRegistrationContext, SystemStatus } from '../types'
 import { TelegramLoginDialog } from './telegram-login-dialog'
 
 type OAuthProvidersProps = {
@@ -40,6 +40,7 @@ type OAuthProvidersProps = {
   onWeChatLogin?: () => void
   isWeChatLoading?: boolean
   redirectTo?: string
+  enterpriseContext?: EnterpriseRegistrationContext
 }
 
 type ProviderButton = {
@@ -57,6 +58,7 @@ export function OAuthProviders({
   onWeChatLogin,
   isWeChatLoading = false,
   redirectTo,
+  enterpriseContext,
 }: OAuthProvidersProps) {
   const { t } = useTranslation()
   const {
@@ -73,7 +75,7 @@ export function OAuthProviders({
     isTelegramPending,
     handleTelegramAuthorization,
     setIsTelegramDialogOpen,
-  } = useOAuthLogin(status, redirectTo)
+  } = useOAuthLogin(status, redirectTo, enterpriseContext)
 
   const providerButtons: ProviderButton[] = []
 

@@ -85,6 +85,7 @@ type RelayInfo struct {
 	TokenKey          string
 	TokenGroup        string
 	UserId            int
+	EnterpriseID      int
 	UsingGroup        string // 使用的分组，当auto跨分组重试时，会变动
 	UserGroup         string // 用户所在分组
 	TokenUnlimited    bool
@@ -505,12 +506,13 @@ func genBaseRelayInfo(c *gin.Context, request dto.Request) *RelayInfo {
 		Request:         request,
 		ReasoningEffort: reasoningEffort,
 
-		RequestId:  reqId,
-		UserId:     common.GetContextKeyInt(c, constant.ContextKeyUserId),
-		UsingGroup: common.GetContextKeyString(c, constant.ContextKeyUsingGroup),
-		UserGroup:  common.GetContextKeyString(c, constant.ContextKeyUserGroup),
-		UserQuota:  common.GetContextKeyInt(c, constant.ContextKeyUserQuota),
-		UserEmail:  common.GetContextKeyString(c, constant.ContextKeyUserEmail),
+		RequestId:    reqId,
+		UserId:       common.GetContextKeyInt(c, constant.ContextKeyUserId),
+		EnterpriseID: common.GetContextKeyInt(c, constant.ContextKeyEnterpriseId),
+		UsingGroup:   common.GetContextKeyString(c, constant.ContextKeyUsingGroup),
+		UserGroup:    common.GetContextKeyString(c, constant.ContextKeyUserGroup),
+		UserQuota:    common.GetContextKeyInt(c, constant.ContextKeyUserQuota),
+		UserEmail:    common.GetContextKeyString(c, constant.ContextKeyUserEmail),
 
 		OriginModelName: common.GetContextKeyString(c, constant.ContextKeyOriginalModel),
 
@@ -872,6 +874,7 @@ type TaskSubmitReq struct {
 	Image          string                 `json:"image,omitempty"`
 	Images         []string               `json:"images,omitempty"`
 	Size           string                 `json:"size,omitempty"`
+	Resolution     string                 `json:"resolution,omitempty"`
 	Duration       int                    `json:"duration,omitempty"`
 	Seconds        string                 `json:"seconds,omitempty"`
 	InputReference string                 `json:"input_reference,omitempty"`
@@ -891,6 +894,7 @@ func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
 	aux := &struct {
 		Metadata json.RawMessage `json:"metadata,omitempty"`
 		Duration json.RawMessage `json:"duration,omitempty"`
+		Input    json.RawMessage `json:"input,omitempty"`
 		*Alias
 	}{
 		Alias: (*Alias)(t),
@@ -927,6 +931,51 @@ func (t *TaskSubmitReq) UnmarshalJSON(data []byte) error {
 		var metadataObj map[string]interface{}
 		if err := common.Unmarshal(aux.Metadata, &metadataObj); err == nil {
 			t.Metadata = metadataObj
+		}
+	}
+
+	// 12AI 的统一视频接口把生成参数放在 input 对象中。保留原始请求
+	// 透传给上游，同时把校验和计费所需字段提取到通用任务请求中。
+	if len(aux.Input) > 0 {
+		var input map[string]json.RawMessage
+		if err := common.Unmarshal(aux.Input, &input); err == nil {
+			readString := func(name string) string {
+				var value string
+				if raw, ok := input[name]; ok {
+					_ = common.Unmarshal(raw, &value)
+				}
+				return value
+			}
+			readInt := func(name string) int {
+				var value int
+				if raw, ok := input[name]; ok {
+					_ = common.Unmarshal(raw, &value)
+				}
+				return value
+			}
+			if t.Prompt == "" {
+				t.Prompt = readString("prompt")
+			}
+			if t.Duration == 0 {
+				t.Duration = readInt("duration")
+			}
+			if t.Seconds == "" {
+				t.Seconds = readString("seconds")
+			}
+			if t.Size == "" {
+				t.Size = readString("size")
+			}
+			if t.Resolution == "" {
+				t.Resolution = readString("resolution")
+			}
+			if len(t.Images) == 0 {
+				for _, name := range []string{"image_references", "start_frames", "end_frames", "video_references", "audio_references"} {
+					if raw, ok := input[name]; ok && string(raw) != "null" && string(raw) != "[]" {
+						t.Images = []string{"12ai-input"}
+						break
+					}
+				}
+			}
 		}
 	}
 

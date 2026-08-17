@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/types"
 
@@ -59,6 +60,7 @@ func sanitizeClickHouseLikePattern(input string) (string, error) {
 type Log struct {
 	Id                int    `json:"id" gorm:"index:idx_created_at_id,priority:2;index:idx_user_id_id,priority:2"`
 	UserId            int    `json:"user_id" gorm:"index;index:idx_user_id_id,priority:1"`
+	EnterpriseID      int    `json:"enterprise_id" gorm:"index"`
 	CreatedAt         int64  `json:"created_at" gorm:"bigint;index:idx_created_at_id,priority:1;index:idx_created_at_type"`
 	Type              int    `json:"type" gorm:"index:idx_created_at_type"`
 	Content           string `json:"content"`
@@ -227,6 +229,21 @@ func RecordLoginLog(userId int, username string, content string, ip string, acti
 // adminInfo 存放操作者身份（写入 Other.admin_info，普通用户查询时剥离）；
 // auditInfo 存放路由/方法/结果等中间件兜底信息（写入 Other.audit_info，普通用户查询时剥离）。
 func RecordOperationAuditLog(logUserId int, content string, ip string, action string, params map[string]interface{}, adminInfo map[string]interface{}, auditInfo map[string]interface{}) {
+	enterpriseID := 0
+	if DB != nil {
+		membership, err := GetEnterpriseMembershipByUserID(logUserId)
+		if err == nil {
+			enterpriseID = membership.EnterpriseID
+		}
+	}
+	recordOperationAuditLog(enterpriseID, logUserId, content, ip, action, params, adminInfo, auditInfo)
+}
+
+func RecordEnterpriseOperationAuditLog(enterpriseID int, logUserId int, content string, ip string, action string, params map[string]interface{}, adminInfo map[string]interface{}, auditInfo map[string]interface{}) {
+	recordOperationAuditLog(enterpriseID, logUserId, content, ip, action, params, adminInfo, auditInfo)
+}
+
+func recordOperationAuditLog(enterpriseID int, logUserId int, content string, ip string, action string, params map[string]interface{}, adminInfo map[string]interface{}, auditInfo map[string]interface{}) {
 	username, _ := GetUsernameById(logUserId, false)
 	other := map[string]interface{}{
 		"op": buildOpField(action, params),
@@ -238,13 +255,14 @@ func RecordOperationAuditLog(logUserId int, content string, ip string, action st
 		other["audit_info"] = auditInfo
 	}
 	log := &Log{
-		UserId:    logUserId,
-		Username:  username,
-		CreatedAt: common.GetTimestamp(),
-		Type:      LogTypeManage,
-		Content:   content,
-		Ip:        ip,
-		Other:     common.MapToJsonStr(other),
+		UserId:       logUserId,
+		EnterpriseID: enterpriseID,
+		Username:     username,
+		CreatedAt:    common.GetTimestamp(),
+		Type:         LogTypeManage,
+		Content:      content,
+		Ip:           ip,
+		Other:        common.MapToJsonStr(other),
 	}
 	if err := createLog(log); err != nil {
 		common.SysLog("failed to record operation audit log: " + err.Error())
@@ -326,6 +344,7 @@ func RecordErrorLog(c *gin.Context, userId int, channelId int, modelName string,
 }
 
 type RecordConsumeLogParams struct {
+	EnterpriseID     int                    `json:"enterprise_id"`
 	ChannelId        int                    `json:"channel_id"`
 	PromptTokens     int                    `json:"prompt_tokens"`
 	CompletionTokens int                    `json:"completion_tokens"`
@@ -349,6 +368,10 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 	requestId := c.GetString(common.RequestIdKey)
 	upstreamRequestId := c.GetString(common.UpstreamRequestIdKey)
 	createdAt := common.GetTimestamp()
+	enterpriseID := c.GetInt(string(constant.ContextKeyEnterpriseId))
+	if params.EnterpriseID > 0 {
+		enterpriseID = params.EnterpriseID
+	}
 	otherStr := common.MapToJsonStr(params.Other)
 	// 判断是否需要记录 IP
 	needRecordIp := false
@@ -359,6 +382,7 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 	}
 	log := &Log{
 		UserId:           userId,
+		EnterpriseID:     enterpriseID,
 		Username:         username,
 		CreatedAt:        createdAt,
 		Type:             LogTypeConsume,
@@ -389,31 +413,33 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 	}
 	if common.DataExportEnabled {
 		LogQuotaData(QuotaDataLogParams{
-			UserID:    userId,
-			Username:  username,
-			ModelName: params.ModelName,
-			Quota:     params.Quota,
-			CreatedAt: createdAt,
-			TokenUsed: params.PromptTokens + params.CompletionTokens,
-			UseGroup:  params.Group,
-			TokenID:   params.TokenId,
-			ChannelID: params.ChannelId,
-			NodeName:  common.NodeName,
+			UserID:       userId,
+			EnterpriseID: enterpriseID,
+			Username:     username,
+			ModelName:    params.ModelName,
+			Quota:        params.Quota,
+			CreatedAt:    createdAt,
+			TokenUsed:    params.PromptTokens + params.CompletionTokens,
+			UseGroup:     params.Group,
+			TokenID:      params.TokenId,
+			ChannelID:    params.ChannelId,
+			NodeName:     common.NodeName,
 		})
 	}
 }
 
 type RecordTaskBillingLogParams struct {
-	UserId    int
-	LogType   int
-	Content   string
-	ChannelId int
-	ModelName string
-	Quota     int
-	TokenId   int
-	Group     string
-	Other     map[string]interface{}
-	NodeName  string // 任务发起节点；为空时回退当前节点
+	EnterpriseID int
+	UserId       int
+	LogType      int
+	Content      string
+	ChannelId    int
+	ModelName    string
+	Quota        int
+	TokenId      int
+	Group        string
+	Other        map[string]interface{}
+	NodeName     string // 任务发起节点；为空时回退当前节点
 }
 
 func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
@@ -428,19 +454,21 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 		}
 	}
 	createdAt := common.GetTimestamp()
+	enterpriseID := params.EnterpriseID
 	log := &Log{
-		UserId:    params.UserId,
-		Username:  username,
-		CreatedAt: createdAt,
-		Type:      params.LogType,
-		Content:   params.Content,
-		TokenName: tokenName,
-		ModelName: params.ModelName,
-		Quota:     params.Quota,
-		ChannelId: params.ChannelId,
-		TokenId:   params.TokenId,
-		Group:     params.Group,
-		Other:     common.MapToJsonStr(params.Other),
+		UserId:       params.UserId,
+		EnterpriseID: enterpriseID,
+		Username:     username,
+		CreatedAt:    createdAt,
+		Type:         params.LogType,
+		Content:      params.Content,
+		TokenName:    tokenName,
+		ModelName:    params.ModelName,
+		Quota:        params.Quota,
+		ChannelId:    params.ChannelId,
+		TokenId:      params.TokenId,
+		Group:        params.Group,
+		Other:        common.MapToJsonStr(params.Other),
 	}
 	err := createLog(log)
 	if err != nil {
@@ -452,15 +480,16 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 			nodeName = common.NodeName
 		}
 		LogQuotaData(QuotaDataLogParams{
-			UserID:    params.UserId,
-			Username:  username,
-			ModelName: params.ModelName,
-			Quota:     params.Quota,
-			CreatedAt: createdAt,
-			UseGroup:  params.Group,
-			TokenID:   params.TokenId,
-			ChannelID: params.ChannelId,
-			NodeName:  nodeName,
+			UserID:       params.UserId,
+			EnterpriseID: enterpriseID,
+			Username:     username,
+			ModelName:    params.ModelName,
+			Quota:        params.Quota,
+			CreatedAt:    createdAt,
+			UseGroup:     params.Group,
+			TokenID:      params.TokenId,
+			ChannelID:    params.ChannelId,
+			NodeName:     nodeName,
 		})
 	}
 }
@@ -607,6 +636,60 @@ func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int
 
 	formatUserLogs(logs, startIdx)
 	return logs, total, err
+}
+
+func GetEnterpriseLogs(enterpriseID int, logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, startIdx int, num int, group string, requestId string) (logs []*Log, total int64, err error) {
+	if enterpriseID <= 0 {
+		return nil, 0, errors.New("enterprise id is invalid")
+	}
+
+	tx := LOG_DB.Where("logs.enterprise_id = ?", enterpriseID)
+	if logType != LogTypeUnknown {
+		tx = tx.Where("logs.type = ?", logType)
+	}
+	if tx, err = applyExplicitLogTextFilter(tx, "logs.model_name", modelName); err != nil {
+		return nil, 0, err
+	}
+	if tx, err = applyExplicitLogTextFilter(tx, "logs.username", username); err != nil {
+		return nil, 0, err
+	}
+	if group != "" {
+		tx = tx.Where("logs."+logGroupCol+" = ?", group)
+	}
+	if requestId != "" {
+		tx = tx.Where("logs.request_id = ?", requestId)
+	}
+	if startTimestamp != 0 {
+		tx = tx.Where("logs.created_at >= ?", startTimestamp)
+	}
+	if endTimestamp != 0 {
+		tx = tx.Where("logs.created_at <= ?", endTimestamp)
+	}
+	if err = tx.Model(&Log{}).Limit(logSearchCountLimit).Count(&total).Error; err != nil {
+		common.SysError("failed to count enterprise logs: " + err.Error())
+		return nil, 0, errors.New("查询企业审计日志失败")
+	}
+
+	order := "logs.created_at desc, logs.id desc"
+	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
+		order = clickHouseLogOrder("logs.")
+	}
+	if err = tx.Order(order).Limit(num).Offset(startIdx).Find(&logs).Error; err != nil {
+		common.SysError("failed to search enterprise logs: " + err.Error())
+		return nil, 0, errors.New("查询企业审计日志失败")
+	}
+	formatEnterpriseLogs(logs, startIdx)
+	return logs, total, nil
+}
+
+func formatEnterpriseLogs(logs []*Log, startIdx int) {
+	formatUserLogs(logs, startIdx)
+	for _, log := range logs {
+		log.Ip = ""
+		log.TokenName = ""
+		log.Content = ""
+		log.UpstreamRequestId = ""
+	}
 }
 
 type Stat struct {

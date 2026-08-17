@@ -76,6 +76,8 @@ const (
 
 // User related messages
 const (
+	MsgEnterpriseRegistrationRequired = "enterprise.registration_required"
+
 	MsgUserPasswordLoginDisabled     = "user.password_login_disabled"
 	MsgUserRegisterDisabled          = "user.register_disabled"
 	MsgUserPasswordRegisterDisabled  = "user.password_register_disabled"

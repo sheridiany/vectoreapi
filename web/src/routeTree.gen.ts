@@ -38,6 +38,14 @@ import { Route as AuthenticatedChannelsIndexRouteImport } from './routes/_authen
 import { Route as AuthenticatedChatChatIdRouteImport } from './routes/_authenticated/chat/$chatId'
 import { Route as AuthenticatedDashboardIndexRouteImport } from './routes/_authenticated/dashboard/index'
 import { Route as AuthenticatedDashboardSectionRouteImport } from './routes/_authenticated/dashboard/$section'
+import { Route as AuthenticatedEnterpriseIndexRouteImport } from './routes/_authenticated/enterprise/index'
+import { Route as AuthenticatedEnterpriseAdminRouteImport } from './routes/_authenticated/enterprise/admin'
+import { Route as AuthenticatedEnterpriseApiAccessRouteImport } from './routes/_authenticated/enterprise/api-access'
+import { Route as AuthenticatedEnterpriseAuditRouteImport } from './routes/_authenticated/enterprise/audit'
+import { Route as AuthenticatedEnterpriseMembersRouteImport } from './routes/_authenticated/enterprise/members'
+import { Route as AuthenticatedEnterpriseOnboardingRouteImport } from './routes/_authenticated/enterprise/onboarding'
+import { Route as AuthenticatedEnterpriseOverviewRouteImport } from './routes/_authenticated/enterprise/overview'
+import { Route as AuthenticatedEnterpriseRankingsRouteImport } from './routes/_authenticated/enterprise/rankings'
 import { Route as AuthenticatedErrorsErrorRouteImport } from './routes/_authenticated/errors/$error'
 import { Route as AuthenticatedKeysIndexRouteImport } from './routes/_authenticated/keys/index'
 import { Route as AuthenticatedModelsIndexRouteImport } from './routes/_authenticated/models/index'
@@ -53,6 +61,7 @@ import { Route as AuthenticatedUsageLogsSectionRouteImport } from './routes/_aut
 import { Route as AuthenticatedUsersIndexRouteImport } from './routes/_authenticated/users/index'
 import { Route as AuthenticatedWalletIndexRouteImport } from './routes/_authenticated/wallet/index'
 import { Route as PricingModelIdIndexRouteImport } from './routes/pricing/$modelId/index'
+import { Route as AuthenticatedEnterpriseAdminRankingsRouteImport } from './routes/_authenticated/enterprise/admin_.rankings'
 import { Route as AuthenticatedSystemSettingsAuthIndexRouteImport } from './routes/_authenticated/system-settings/auth/index'
 import { Route as AuthenticatedSystemSettingsAuthSectionRouteImport } from './routes/_authenticated/system-settings/auth/$section'
 import { Route as AuthenticatedSystemSettingsBillingIndexRouteImport } from './routes/_authenticated/system-settings/billing/index'
@@ -215,6 +224,54 @@ const AuthenticatedDashboardSectionRoute =
     path: '/dashboard/$section',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
+const AuthenticatedEnterpriseIndexRoute =
+  AuthenticatedEnterpriseIndexRouteImport.update({
+    id: '/enterprise/',
+    path: '/enterprise/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedEnterpriseAdminRoute =
+  AuthenticatedEnterpriseAdminRouteImport.update({
+    id: '/enterprise/admin',
+    path: '/enterprise/admin',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedEnterpriseApiAccessRoute =
+  AuthenticatedEnterpriseApiAccessRouteImport.update({
+    id: '/enterprise/api-access',
+    path: '/enterprise/api-access',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedEnterpriseAuditRoute =
+  AuthenticatedEnterpriseAuditRouteImport.update({
+    id: '/enterprise/audit',
+    path: '/enterprise/audit',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedEnterpriseMembersRoute =
+  AuthenticatedEnterpriseMembersRouteImport.update({
+    id: '/enterprise/members',
+    path: '/enterprise/members',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedEnterpriseOnboardingRoute =
+  AuthenticatedEnterpriseOnboardingRouteImport.update({
+    id: '/enterprise/onboarding',
+    path: '/enterprise/onboarding',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedEnterpriseOverviewRoute =
+  AuthenticatedEnterpriseOverviewRouteImport.update({
+    id: '/enterprise/overview',
+    path: '/enterprise/overview',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedEnterpriseRankingsRoute =
+  AuthenticatedEnterpriseRankingsRouteImport.update({
+    id: '/enterprise/rankings',
+    path: '/enterprise/rankings',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedErrorsErrorRoute =
   AuthenticatedErrorsErrorRouteImport.update({
     id: '/errors/$error',
@@ -302,6 +359,12 @@ const PricingModelIdIndexRoute = PricingModelIdIndexRouteImport.update({
   path: '/pricing/$modelId/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AuthenticatedEnterpriseAdminRankingsRoute =
+  AuthenticatedEnterpriseAdminRankingsRouteImport.update({
+    id: '/enterprise/admin_/rankings',
+    path: '/enterprise/admin/rankings',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedSystemSettingsAuthIndexRoute =
   AuthenticatedSystemSettingsAuthIndexRouteImport.update({
     id: '/auth/',
@@ -413,11 +476,19 @@ export interface FileRoutesByFullPath {
   '/user/reset': typeof authUserResetRoute
   '/chat/$chatId': typeof AuthenticatedChatChatIdRoute
   '/dashboard/$section': typeof AuthenticatedDashboardSectionRoute
+  '/enterprise/admin': typeof AuthenticatedEnterpriseAdminRoute
+  '/enterprise/api-access': typeof AuthenticatedEnterpriseApiAccessRoute
+  '/enterprise/audit': typeof AuthenticatedEnterpriseAuditRoute
+  '/enterprise/members': typeof AuthenticatedEnterpriseMembersRoute
+  '/enterprise/onboarding': typeof AuthenticatedEnterpriseOnboardingRoute
+  '/enterprise/overview': typeof AuthenticatedEnterpriseOverviewRoute
+  '/enterprise/rankings': typeof AuthenticatedEnterpriseRankingsRoute
   '/errors/$error': typeof AuthenticatedErrorsErrorRoute
   '/models/$section': typeof AuthenticatedModelsSectionRoute
   '/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
   '/channels/': typeof AuthenticatedChannelsIndexRoute
   '/dashboard/': typeof AuthenticatedDashboardIndexRoute
+  '/enterprise/': typeof AuthenticatedEnterpriseIndexRoute
   '/keys/': typeof AuthenticatedKeysIndexRoute
   '/models/': typeof AuthenticatedModelsIndexRoute
   '/playground/': typeof AuthenticatedPlaygroundIndexRoute
@@ -430,6 +501,7 @@ export interface FileRoutesByFullPath {
   '/users/': typeof AuthenticatedUsersIndexRoute
   '/wallet/': typeof AuthenticatedWalletIndexRoute
   '/pricing/$modelId/': typeof PricingModelIdIndexRoute
+  '/enterprise/admin/rankings': typeof AuthenticatedEnterpriseAdminRankingsRoute
   '/system-settings/auth/$section': typeof AuthenticatedSystemSettingsAuthSectionRoute
   '/system-settings/billing/$section': typeof AuthenticatedSystemSettingsBillingSectionRoute
   '/system-settings/content/$section': typeof AuthenticatedSystemSettingsContentSectionRoute
@@ -470,11 +542,19 @@ export interface FileRoutesByTo {
   '/user/reset': typeof authUserResetRoute
   '/chat/$chatId': typeof AuthenticatedChatChatIdRoute
   '/dashboard/$section': typeof AuthenticatedDashboardSectionRoute
+  '/enterprise/admin': typeof AuthenticatedEnterpriseAdminRoute
+  '/enterprise/api-access': typeof AuthenticatedEnterpriseApiAccessRoute
+  '/enterprise/audit': typeof AuthenticatedEnterpriseAuditRoute
+  '/enterprise/members': typeof AuthenticatedEnterpriseMembersRoute
+  '/enterprise/onboarding': typeof AuthenticatedEnterpriseOnboardingRoute
+  '/enterprise/overview': typeof AuthenticatedEnterpriseOverviewRoute
+  '/enterprise/rankings': typeof AuthenticatedEnterpriseRankingsRoute
   '/errors/$error': typeof AuthenticatedErrorsErrorRoute
   '/models/$section': typeof AuthenticatedModelsSectionRoute
   '/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
   '/channels': typeof AuthenticatedChannelsIndexRoute
   '/dashboard': typeof AuthenticatedDashboardIndexRoute
+  '/enterprise': typeof AuthenticatedEnterpriseIndexRoute
   '/keys': typeof AuthenticatedKeysIndexRoute
   '/models': typeof AuthenticatedModelsIndexRoute
   '/playground': typeof AuthenticatedPlaygroundIndexRoute
@@ -487,6 +567,7 @@ export interface FileRoutesByTo {
   '/users': typeof AuthenticatedUsersIndexRoute
   '/wallet': typeof AuthenticatedWalletIndexRoute
   '/pricing/$modelId': typeof PricingModelIdIndexRoute
+  '/enterprise/admin/rankings': typeof AuthenticatedEnterpriseAdminRankingsRoute
   '/system-settings/auth/$section': typeof AuthenticatedSystemSettingsAuthSectionRoute
   '/system-settings/billing/$section': typeof AuthenticatedSystemSettingsBillingSectionRoute
   '/system-settings/content/$section': typeof AuthenticatedSystemSettingsContentSectionRoute
@@ -531,11 +612,19 @@ export interface FileRoutesById {
   '/(auth)/user/reset': typeof authUserResetRoute
   '/_authenticated/chat/$chatId': typeof AuthenticatedChatChatIdRoute
   '/_authenticated/dashboard/$section': typeof AuthenticatedDashboardSectionRoute
+  '/_authenticated/enterprise/admin': typeof AuthenticatedEnterpriseAdminRoute
+  '/_authenticated/enterprise/api-access': typeof AuthenticatedEnterpriseApiAccessRoute
+  '/_authenticated/enterprise/audit': typeof AuthenticatedEnterpriseAuditRoute
+  '/_authenticated/enterprise/members': typeof AuthenticatedEnterpriseMembersRoute
+  '/_authenticated/enterprise/onboarding': typeof AuthenticatedEnterpriseOnboardingRoute
+  '/_authenticated/enterprise/overview': typeof AuthenticatedEnterpriseOverviewRoute
+  '/_authenticated/enterprise/rankings': typeof AuthenticatedEnterpriseRankingsRoute
   '/_authenticated/errors/$error': typeof AuthenticatedErrorsErrorRoute
   '/_authenticated/models/$section': typeof AuthenticatedModelsSectionRoute
   '/_authenticated/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
   '/_authenticated/channels/': typeof AuthenticatedChannelsIndexRoute
   '/_authenticated/dashboard/': typeof AuthenticatedDashboardIndexRoute
+  '/_authenticated/enterprise/': typeof AuthenticatedEnterpriseIndexRoute
   '/_authenticated/keys/': typeof AuthenticatedKeysIndexRoute
   '/_authenticated/models/': typeof AuthenticatedModelsIndexRoute
   '/_authenticated/playground/': typeof AuthenticatedPlaygroundIndexRoute
@@ -548,6 +637,7 @@ export interface FileRoutesById {
   '/_authenticated/users/': typeof AuthenticatedUsersIndexRoute
   '/_authenticated/wallet/': typeof AuthenticatedWalletIndexRoute
   '/pricing/$modelId/': typeof PricingModelIdIndexRoute
+  '/_authenticated/enterprise/admin_/rankings': typeof AuthenticatedEnterpriseAdminRankingsRoute
   '/_authenticated/system-settings/auth/$section': typeof AuthenticatedSystemSettingsAuthSectionRoute
   '/_authenticated/system-settings/billing/$section': typeof AuthenticatedSystemSettingsBillingSectionRoute
   '/_authenticated/system-settings/content/$section': typeof AuthenticatedSystemSettingsContentSectionRoute
@@ -591,11 +681,19 @@ export interface FileRouteTypes {
     | '/user/reset'
     | '/chat/$chatId'
     | '/dashboard/$section'
+    | '/enterprise/admin'
+    | '/enterprise/api-access'
+    | '/enterprise/audit'
+    | '/enterprise/members'
+    | '/enterprise/onboarding'
+    | '/enterprise/overview'
+    | '/enterprise/rankings'
     | '/errors/$error'
     | '/models/$section'
     | '/usage-logs/$section'
     | '/channels/'
     | '/dashboard/'
+    | '/enterprise/'
     | '/keys/'
     | '/models/'
     | '/playground/'
@@ -608,6 +706,7 @@ export interface FileRouteTypes {
     | '/users/'
     | '/wallet/'
     | '/pricing/$modelId/'
+    | '/enterprise/admin/rankings'
     | '/system-settings/auth/$section'
     | '/system-settings/billing/$section'
     | '/system-settings/content/$section'
@@ -648,11 +747,19 @@ export interface FileRouteTypes {
     | '/user/reset'
     | '/chat/$chatId'
     | '/dashboard/$section'
+    | '/enterprise/admin'
+    | '/enterprise/api-access'
+    | '/enterprise/audit'
+    | '/enterprise/members'
+    | '/enterprise/onboarding'
+    | '/enterprise/overview'
+    | '/enterprise/rankings'
     | '/errors/$error'
     | '/models/$section'
     | '/usage-logs/$section'
     | '/channels'
     | '/dashboard'
+    | '/enterprise'
     | '/keys'
     | '/models'
     | '/playground'
@@ -665,6 +772,7 @@ export interface FileRouteTypes {
     | '/users'
     | '/wallet'
     | '/pricing/$modelId'
+    | '/enterprise/admin/rankings'
     | '/system-settings/auth/$section'
     | '/system-settings/billing/$section'
     | '/system-settings/content/$section'
@@ -708,11 +816,19 @@ export interface FileRouteTypes {
     | '/(auth)/user/reset'
     | '/_authenticated/chat/$chatId'
     | '/_authenticated/dashboard/$section'
+    | '/_authenticated/enterprise/admin'
+    | '/_authenticated/enterprise/api-access'
+    | '/_authenticated/enterprise/audit'
+    | '/_authenticated/enterprise/members'
+    | '/_authenticated/enterprise/onboarding'
+    | '/_authenticated/enterprise/overview'
+    | '/_authenticated/enterprise/rankings'
     | '/_authenticated/errors/$error'
     | '/_authenticated/models/$section'
     | '/_authenticated/usage-logs/$section'
     | '/_authenticated/channels/'
     | '/_authenticated/dashboard/'
+    | '/_authenticated/enterprise/'
     | '/_authenticated/keys/'
     | '/_authenticated/models/'
     | '/_authenticated/playground/'
@@ -725,6 +841,7 @@ export interface FileRouteTypes {
     | '/_authenticated/users/'
     | '/_authenticated/wallet/'
     | '/pricing/$modelId/'
+    | '/_authenticated/enterprise/admin_/rankings'
     | '/_authenticated/system-settings/auth/$section'
     | '/_authenticated/system-settings/billing/$section'
     | '/_authenticated/system-settings/content/$section'
@@ -965,6 +1082,62 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedDashboardSectionRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/enterprise/': {
+      id: '/_authenticated/enterprise/'
+      path: '/enterprise'
+      fullPath: '/enterprise/'
+      preLoaderRoute: typeof AuthenticatedEnterpriseIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/enterprise/admin': {
+      id: '/_authenticated/enterprise/admin'
+      path: '/enterprise/admin'
+      fullPath: '/enterprise/admin'
+      preLoaderRoute: typeof AuthenticatedEnterpriseAdminRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/enterprise/api-access': {
+      id: '/_authenticated/enterprise/api-access'
+      path: '/enterprise/api-access'
+      fullPath: '/enterprise/api-access'
+      preLoaderRoute: typeof AuthenticatedEnterpriseApiAccessRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/enterprise/audit': {
+      id: '/_authenticated/enterprise/audit'
+      path: '/enterprise/audit'
+      fullPath: '/enterprise/audit'
+      preLoaderRoute: typeof AuthenticatedEnterpriseAuditRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/enterprise/members': {
+      id: '/_authenticated/enterprise/members'
+      path: '/enterprise/members'
+      fullPath: '/enterprise/members'
+      preLoaderRoute: typeof AuthenticatedEnterpriseMembersRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/enterprise/onboarding': {
+      id: '/_authenticated/enterprise/onboarding'
+      path: '/enterprise/onboarding'
+      fullPath: '/enterprise/onboarding'
+      preLoaderRoute: typeof AuthenticatedEnterpriseOnboardingRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/enterprise/overview': {
+      id: '/_authenticated/enterprise/overview'
+      path: '/enterprise/overview'
+      fullPath: '/enterprise/overview'
+      preLoaderRoute: typeof AuthenticatedEnterpriseOverviewRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/enterprise/rankings': {
+      id: '/_authenticated/enterprise/rankings'
+      path: '/enterprise/rankings'
+      fullPath: '/enterprise/rankings'
+      preLoaderRoute: typeof AuthenticatedEnterpriseRankingsRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/errors/$error': {
       id: '/_authenticated/errors/$error'
       path: '/errors/$error'
@@ -1069,6 +1242,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/pricing/$modelId/'
       preLoaderRoute: typeof PricingModelIdIndexRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/_authenticated/enterprise/admin_/rankings': {
+      id: '/_authenticated/enterprise/admin_/rankings'
+      path: '/enterprise/admin/rankings'
+      fullPath: '/enterprise/admin/rankings'
+      preLoaderRoute: typeof AuthenticatedEnterpriseAdminRankingsRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/system-settings/auth/': {
       id: '/_authenticated/system-settings/auth/'
@@ -1259,11 +1439,19 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedChat2linkRoute: typeof AuthenticatedChat2linkRoute
   AuthenticatedChatChatIdRoute: typeof AuthenticatedChatChatIdRoute
   AuthenticatedDashboardSectionRoute: typeof AuthenticatedDashboardSectionRoute
+  AuthenticatedEnterpriseAdminRoute: typeof AuthenticatedEnterpriseAdminRoute
+  AuthenticatedEnterpriseApiAccessRoute: typeof AuthenticatedEnterpriseApiAccessRoute
+  AuthenticatedEnterpriseAuditRoute: typeof AuthenticatedEnterpriseAuditRoute
+  AuthenticatedEnterpriseMembersRoute: typeof AuthenticatedEnterpriseMembersRoute
+  AuthenticatedEnterpriseOnboardingRoute: typeof AuthenticatedEnterpriseOnboardingRoute
+  AuthenticatedEnterpriseOverviewRoute: typeof AuthenticatedEnterpriseOverviewRoute
+  AuthenticatedEnterpriseRankingsRoute: typeof AuthenticatedEnterpriseRankingsRoute
   AuthenticatedErrorsErrorRoute: typeof AuthenticatedErrorsErrorRoute
   AuthenticatedModelsSectionRoute: typeof AuthenticatedModelsSectionRoute
   AuthenticatedUsageLogsSectionRoute: typeof AuthenticatedUsageLogsSectionRoute
   AuthenticatedChannelsIndexRoute: typeof AuthenticatedChannelsIndexRoute
   AuthenticatedDashboardIndexRoute: typeof AuthenticatedDashboardIndexRoute
+  AuthenticatedEnterpriseIndexRoute: typeof AuthenticatedEnterpriseIndexRoute
   AuthenticatedKeysIndexRoute: typeof AuthenticatedKeysIndexRoute
   AuthenticatedModelsIndexRoute: typeof AuthenticatedModelsIndexRoute
   AuthenticatedPlaygroundIndexRoute: typeof AuthenticatedPlaygroundIndexRoute
@@ -1274,6 +1462,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedUsageLogsIndexRoute: typeof AuthenticatedUsageLogsIndexRoute
   AuthenticatedUsersIndexRoute: typeof AuthenticatedUsersIndexRoute
   AuthenticatedWalletIndexRoute: typeof AuthenticatedWalletIndexRoute
+  AuthenticatedEnterpriseAdminRankingsRoute: typeof AuthenticatedEnterpriseAdminRankingsRoute
 }
 
 const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
@@ -1282,11 +1471,20 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedChat2linkRoute: AuthenticatedChat2linkRoute,
   AuthenticatedChatChatIdRoute: AuthenticatedChatChatIdRoute,
   AuthenticatedDashboardSectionRoute: AuthenticatedDashboardSectionRoute,
+  AuthenticatedEnterpriseAdminRoute: AuthenticatedEnterpriseAdminRoute,
+  AuthenticatedEnterpriseApiAccessRoute: AuthenticatedEnterpriseApiAccessRoute,
+  AuthenticatedEnterpriseAuditRoute: AuthenticatedEnterpriseAuditRoute,
+  AuthenticatedEnterpriseMembersRoute: AuthenticatedEnterpriseMembersRoute,
+  AuthenticatedEnterpriseOnboardingRoute:
+    AuthenticatedEnterpriseOnboardingRoute,
+  AuthenticatedEnterpriseOverviewRoute: AuthenticatedEnterpriseOverviewRoute,
+  AuthenticatedEnterpriseRankingsRoute: AuthenticatedEnterpriseRankingsRoute,
   AuthenticatedErrorsErrorRoute: AuthenticatedErrorsErrorRoute,
   AuthenticatedModelsSectionRoute: AuthenticatedModelsSectionRoute,
   AuthenticatedUsageLogsSectionRoute: AuthenticatedUsageLogsSectionRoute,
   AuthenticatedChannelsIndexRoute: AuthenticatedChannelsIndexRoute,
   AuthenticatedDashboardIndexRoute: AuthenticatedDashboardIndexRoute,
+  AuthenticatedEnterpriseIndexRoute: AuthenticatedEnterpriseIndexRoute,
   AuthenticatedKeysIndexRoute: AuthenticatedKeysIndexRoute,
   AuthenticatedModelsIndexRoute: AuthenticatedModelsIndexRoute,
   AuthenticatedPlaygroundIndexRoute: AuthenticatedPlaygroundIndexRoute,
@@ -1298,6 +1496,8 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedUsageLogsIndexRoute: AuthenticatedUsageLogsIndexRoute,
   AuthenticatedUsersIndexRoute: AuthenticatedUsersIndexRoute,
   AuthenticatedWalletIndexRoute: AuthenticatedWalletIndexRoute,
+  AuthenticatedEnterpriseAdminRankingsRoute:
+    AuthenticatedEnterpriseAdminRankingsRoute,
 }
 
 const AuthenticatedRouteRouteWithChildren =

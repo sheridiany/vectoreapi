@@ -39,6 +39,7 @@ func SetApiRouter(router *gin.Engine) {
 			perfMetricsRoute.GET("", controller.GetPerfMetrics)
 		}
 		apiRouter.GET("/rankings", middleware.HeaderNavModuleAuth("rankings"), controller.GetRankings)
+		apiRouter.GET("/enterprise/registration-options", controller.GetEnterpriseRegistrationOptions)
 		apiRouter.GET("/verification", middleware.EmailVerificationRateLimit(), middleware.TurnstileCheck(), controller.SendEmailVerification)
 		apiRouter.GET("/reset_password", middleware.CriticalRateLimit(), middleware.TurnstileCheck(), controller.SendPasswordResetEmail)
 		apiRouter.POST("/user/reset", middleware.CriticalRateLimit(), anonymousRequestBodyLimit, controller.ResetPassword)
@@ -150,6 +151,43 @@ func SetApiRouter(router *gin.Engine) {
 				adminRoute.GET("/2fa/stats", controller.Admin2FAStats)
 				adminRoute.DELETE("/:id/2fa", controller.AdminDisable2FA)
 			}
+		}
+
+		enterpriseAdminRoute := apiRouter.Group("/enterprise/admin")
+		enterpriseAdminRoute.Use(middleware.RootAuth())
+		{
+			enterpriseAdminRoute.GET("/", controller.AdminListEnterprises)
+			enterpriseAdminRoute.POST("/", controller.AdminCreateEnterprise)
+			enterpriseAdminRoute.PUT("/:id", controller.AdminUpdateEnterprise)
+			enterpriseAdminRoute.GET("/rankings", controller.GetEnterpriseRankings)
+			enterpriseAdminRoute.GET("/:id/members", controller.AdminListEnterpriseMembers)
+			enterpriseAdminRoute.POST("/:id/members", controller.AdminAssignEnterpriseMember)
+			enterpriseAdminRoute.PUT("/:id/members/:user_id", controller.AdminUpdateEnterpriseMember)
+			enterpriseAdminRoute.GET("/:id/invitations", controller.AdminListEnterpriseInvitations)
+			enterpriseAdminRoute.POST("/:id/invitations", controller.AdminCreateEnterpriseInvitation)
+			enterpriseAdminRoute.PATCH("/:id/invitations/:invitation_id", controller.AdminUpdateEnterpriseInvitation)
+		}
+
+		enterpriseRoute := apiRouter.Group("/enterprise")
+		enterpriseRoute.Use(middleware.UserAuth())
+		{
+			enterpriseRoute.GET("/:id/rankings", middleware.EnterpriseViewerAuth(), controller.GetEnterpriseMemberRankings)
+			enterpriseRoute.GET("/:id/analytics", middleware.EnterpriseViewerAuth(), controller.GetEnterpriseAnalytics)
+			enterpriseRoute.GET("/:id/budget", middleware.EnterpriseViewerAuth(), controller.GetEnterpriseBudget)
+			enterpriseRoute.PUT("/:id/budget", middleware.EnterpriseAdminAuth(), controller.UpdateEnterpriseBudget)
+			enterpriseRoute.GET("/:id/key-policy", middleware.EnterpriseViewerAuth(), controller.GetEnterpriseKeyPolicy)
+			enterpriseRoute.POST("/:id/key-policy/apply", middleware.EnterpriseAdminAuth(), controller.ApplyEnterpriseKeyPolicy)
+			enterpriseRoute.POST("/:id/key-policy/rollback/:operation_id", middleware.EnterpriseAdminAuth(), controller.RollbackEnterpriseKeyPolicy)
+			enterpriseRoute.GET("/:id/members", middleware.EnterpriseViewerAuth(), controller.AdminListEnterpriseMembers)
+			enterpriseRoute.GET("/:id/member-candidates", middleware.EnterpriseAdminAuth(), controller.AdminListEnterpriseMemberCandidates)
+			enterpriseRoute.POST("/:id/members", middleware.EnterpriseAdminAuth(), controller.AdminAssignEnterpriseMember)
+			enterpriseRoute.PUT("/:id/members/:user_id", middleware.EnterpriseAdminAuth(), controller.AdminUpdateEnterpriseMember)
+			enterpriseRoute.GET("/:id/invitations", middleware.EnterpriseAdminAuth(), controller.AdminListEnterpriseInvitations)
+			enterpriseRoute.POST("/:id/invitations", middleware.EnterpriseAdminAuth(), controller.AdminCreateEnterpriseInvitation)
+			enterpriseRoute.PATCH("/:id/invitations/:invitation_id", middleware.EnterpriseAdminAuth(), controller.AdminUpdateEnterpriseInvitation)
+			enterpriseRoute.GET("/:id/logs", middleware.EnterpriseViewerAuth(), controller.GetEnterpriseLogs)
+			enterpriseRoute.GET("/:id", middleware.EnterpriseAdminAuth(), controller.GetEnterprise)
+			enterpriseRoute.PUT("/:id", middleware.EnterpriseAdminAuth(), controller.UpdateEnterpriseRegistration)
 		}
 
 		// Subscription billing (plans, purchase, admin management)

@@ -39,7 +39,21 @@ export interface RegisterPayload {
   email?: string
   verification_code?: string
   aff_code?: string
+  enterprise_code: string
+  enterprise_invitation_code?: string
   turnstile?: string
+}
+
+export interface EnterpriseRegistrationContext {
+  enterpriseCode: string
+  enterpriseInvitationCode?: string
+}
+
+export interface RegistrationEnterpriseOption {
+  id: number
+  name: string
+  code: string
+  registration_mode: 'open' | 'invite'
 }
 
 export interface PasswordResetPayload {
@@ -211,4 +225,5 @@ export interface CustomOAuthProviderInfo {
 
 export interface AuthFormProps extends React.HTMLAttributes<HTMLFormElement> {
   redirectTo?: string
+  enterpriseContext?: EnterpriseRegistrationContext
 }

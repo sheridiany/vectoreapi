@@ -2,11 +2,13 @@ package sora
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -39,18 +41,20 @@ type ImageURL struct {
 }
 
 type responseTask struct {
-	ID                 string `json:"id"`
-	TaskID             string `json:"task_id,omitempty"` //兼容旧接口
-	Object             string `json:"object"`
-	Model              string `json:"model"`
-	Status             string `json:"status"`
-	Progress           int    `json:"progress"`
-	CreatedAt          int64  `json:"created_at"`
-	CompletedAt        int64  `json:"completed_at,omitempty"`
-	ExpiresAt          int64  `json:"expires_at,omitempty"`
-	Seconds            string `json:"seconds,omitempty"`
-	Size               string `json:"size,omitempty"`
-	RemixedFromVideoID string `json:"remixed_from_video_id,omitempty"`
+	ID                 string          `json:"id"`
+	TaskID             string          `json:"task_id,omitempty"` //兼容旧接口
+	Object             string          `json:"object"`
+	Model              string          `json:"model"`
+	Status             string          `json:"status"`
+	Phase              string          `json:"phase,omitempty"`
+	Progress           json.RawMessage `json:"progress"`
+	CreatedAt          int64           `json:"created_at"`
+	CompletedAt        int64           `json:"completed_at,omitempty"`
+	ExpiresAt          int64           `json:"expires_at,omitempty"`
+	Seconds            string          `json:"seconds,omitempty"`
+	Size               string          `json:"size,omitempty"`
+	Outputs            []string        `json:"outputs,omitempty"`
+	RemixedFromVideoID string          `json:"remixed_from_video_id,omitempty"`
 	Error              *struct {
 		Message string `json:"message"`
 		Code    string `json:"code"`
@@ -115,6 +119,9 @@ func (a *TaskAdaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInf
 	}
 
 	size := req.Size
+	if size == "" && strings.EqualFold(req.Resolution, "2K") {
+		size = "1792x1024"
+	}
 	if size == "" {
 		size = "720x1280"
 	}
@@ -133,7 +140,69 @@ func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, erro
 	if info.Action == constant.TaskActionRemix {
 		return fmt.Sprintf("%s/v1/videos/%s/remix", a.baseURL, info.OriginTaskID), nil
 	}
+	if is12AIBaseURL(a.baseURL) {
+		return fmt.Sprintf("%s/v1/task/submit", a.baseURL), nil
+	}
 	return fmt.Sprintf("%s/v1/videos", a.baseURL), nil
+}
+
+func is12AIBaseURL(baseURL string) bool {
+	parsed, err := url.Parse(baseURL)
+	return err == nil && strings.EqualFold(parsed.Hostname(), "cdn.12ai.org")
+}
+
+func adapt12AIVideoRequest(body map[string]interface{}, modelName string) {
+	input, hasInput := body["input"].(map[string]interface{})
+	if !hasInput {
+		input = make(map[string]interface{})
+		for key, value := range body {
+			switch key {
+			case "model", "callback_url", "metadata":
+				continue
+			default:
+				input[key] = value
+				delete(body, key)
+			}
+		}
+		body["input"] = input
+	}
+
+	if _, ok := input["duration"]; !ok {
+		if seconds, ok := input["seconds"]; ok {
+			input["duration"] = seconds
+			delete(input, "seconds")
+		}
+	}
+	if _, ok := input["resolution"]; !ok {
+		if size, ok := input["size"].(string); ok && (strings.EqualFold(size, "2K") || strings.Contains(size, "1792")) {
+			input["resolution"] = "2K"
+		} else if modelName == "MiniMax-H3" {
+			input["resolution"] = "768P"
+		} else {
+			input["resolution"] = "720p"
+		}
+	}
+	if _, ok := input["aspect_ratio"]; !ok {
+		aspectRatio := "16:9"
+		if size, ok := input["size"].(string); ok {
+			switch strings.ToLower(strings.TrimSpace(size)) {
+			case "720x1280", "1024x1792", "9:16":
+				aspectRatio = "9:16"
+			case "1280x720", "1792x1024", "16:9":
+				aspectRatio = "16:9"
+			}
+		}
+		input["aspect_ratio"] = aspectRatio
+	}
+	delete(input, "size")
+	if _, ok := input["duration"]; !ok {
+		if modelName == "MiniMax-H3" {
+			input["duration"] = 5
+		} else {
+			input["duration"] = 4
+		}
+	}
+	body["model"] = modelName
 }
 
 // BuildRequestHeader sets required headers.
@@ -158,6 +227,9 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 		var bodyMap map[string]interface{}
 		if err := common.Unmarshal(cachedBody, &bodyMap); err == nil {
 			bodyMap["model"] = info.UpstreamModelName
+			if is12AIBaseURL(a.baseURL) {
+				adapt12AIVideoRequest(bodyMap, info.UpstreamModelName)
+			}
 			if newBody, err := common.Marshal(bodyMap); err == nil {
 				return bytes.NewReader(newBody), nil
 			}
@@ -264,6 +336,9 @@ func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any, proxy 
 	}
 
 	uri := fmt.Sprintf("%s/v1/videos/%s", baseUrl, taskID)
+	if is12AIBaseURL(baseUrl) {
+		uri = fmt.Sprintf("%s/v1/task/%s", baseUrl, taskID)
+	}
 
 	req, err := http.NewRequest(http.MethodGet, uri, nil)
 	if err != nil {
@@ -297,14 +372,20 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		Code: 0,
 	}
 
-	switch resTask.Status {
+	status := resTask.Status
+	if status == "" {
+		status = resTask.Phase
+	}
+	switch status {
 	case "queued", "pending":
 		taskResult.Status = model.TaskStatusQueued
 	case "processing", "in_progress":
 		taskResult.Status = model.TaskStatusInProgress
 	case "completed":
 		taskResult.Status = model.TaskStatusSuccess
-		// Url intentionally left empty — the caller constructs the proxy URL using the public task ID
+		if len(resTask.Outputs) > 0 {
+			taskResult.Url = resTask.Outputs[0]
+		}
 	case "failed", "cancelled":
 		taskResult.Status = model.TaskStatusFailure
 		if resTask.Error != nil {
@@ -314,11 +395,42 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		}
 	default:
 	}
-	if resTask.Progress > 0 && resTask.Progress < 100 {
-		taskResult.Progress = fmt.Sprintf("%d%%", resTask.Progress)
+	if progress := parse12AIProgress(resTask.Progress); progress > 0 && progress < 100 {
+		taskResult.Progress = fmt.Sprintf("%d%%", progress)
 	}
 
 	return &taskResult, nil
+}
+
+func parse12AIProgress(raw json.RawMessage) int {
+	if len(raw) == 0 || string(raw) == "null" {
+		return 0
+	}
+
+	var numeric float64
+	if err := json.Unmarshal(raw, &numeric); err == nil {
+		return int(numeric)
+	}
+
+	var values map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &values); err != nil {
+		return 0
+	}
+	for _, key := range []string{"percent", "percentage", "progress", "value"} {
+		if value, ok := values[key]; ok {
+			if err := json.Unmarshal(value, &numeric); err == nil {
+				return int(numeric)
+			}
+		}
+	}
+
+	var current, total float64
+	if err := json.Unmarshal(values["current"], &current); err == nil {
+		if err := json.Unmarshal(values["total"], &total); err == nil && total > 0 {
+			return int(current / total * 100)
+		}
+	}
+	return 0
 }
 
 func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {

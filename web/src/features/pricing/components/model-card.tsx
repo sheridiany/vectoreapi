@@ -30,7 +30,7 @@ import {
   getDynamicPricingSummary,
 } from '../lib/dynamic-price'
 import { parseTags } from '../lib/filters'
-import { isTokenBasedModel } from '../lib/model-helpers'
+import { isPerSecondModel, isTokenBasedModel } from '../lib/model-helpers'
 import { formatPrice, formatRequestPrice } from '../lib/price'
 import type { PricingModel, TokenUnit } from '../types'
 import { ModelBillingModeBadge } from './model-billing-mode-badge'
@@ -55,6 +55,7 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
   const usdExchangeRate = props.usdExchangeRate ?? 1
   const showRechargePrice = props.showRechargePrice ?? false
   const isTokenBased = isTokenBasedModel(props.model)
+  const billingUnit = isPerSecondModel(props.model) ? 'second' : 'request'
   const tokenUnitLabel = tokenUnit === 'K' ? '1K' : '1M'
   const tags = parseTags(props.model.tags)
   const groups = props.model.enable_groups || []
@@ -188,7 +189,7 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
             props.selectedGroup
           )}
         </span>{' '}
-        / {t('request')}
+        / {t(billingUnit)}
       </span>
     )
   }
@@ -245,17 +246,19 @@ export const ModelCard = memo(function ModelCard(props: ModelCardProps) {
         {props.model.description || t('No description available.')}
       </p>
 
-      {/* Footer: left metadata and right performance summary share row alignment */}
-      <div className='mt-2 grid grid-cols-[minmax(0,1fr)_auto] items-start gap-x-2 gap-y-1 sm:mt-4'>
-        <div className='flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1'>
-          {primaryGroup && (
-            <span className='text-muted-foreground text-sm font-medium'>
-              {primaryGroup}
-            </span>
-          )}
-          <ModelBillingModeBadge model={props.model} />
+      {/* Footer: keep metadata rows independent when performance data is unavailable */}
+      <div className='mt-2 space-y-2 sm:mt-4'>
+        <div className='flex min-w-0 items-start justify-between gap-3'>
+          <div className='flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1'>
+            {primaryGroup && (
+              <span className='text-muted-foreground text-sm font-medium'>
+                {primaryGroup}
+              </span>
+            )}
+            <ModelBillingModeBadge model={props.model} />
+          </div>
+          <ModelPerfBadge perf={props.perf} className='shrink-0' />
         </div>
-        <ModelPerfBadge perf={props.perf} className='row-span-2 self-start' />
 
         <div className='flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-0.5 sm:gap-x-3 sm:gap-y-1'>
           {bottomTags.map((item) => (

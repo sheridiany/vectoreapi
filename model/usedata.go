@@ -11,31 +11,33 @@ import (
 
 // QuotaData 柱状图数据
 type QuotaData struct {
-	Id        int    `json:"id"`
-	UserID    int    `json:"user_id" gorm:"index"`
-	Username  string `json:"username" gorm:"index:idx_qdt_model_user_name,priority:2;size:64;default:''"`
-	ModelName string `json:"model_name" gorm:"index:idx_qdt_model_user_name,priority:1;size:64;default:''"`
-	CreatedAt int64  `json:"created_at" gorm:"bigint;index:idx_qdt_created_at,priority:2"`
-	UseGroup  string `json:"use_group" gorm:"index;size:64;default:''"`
-	TokenID   int    `json:"token_id" gorm:"index;default:0"`
-	ChannelID int    `json:"channel_id" gorm:"index;default:0"`
-	NodeName  string `json:"node_name" gorm:"index;size:64;default:''"`
-	TokenUsed int    `json:"token_used" gorm:"default:0"`
-	Count     int    `json:"count" gorm:"default:0"`
-	Quota     int    `json:"quota" gorm:"default:0"`
+	Id           int    `json:"id"`
+	UserID       int    `json:"user_id" gorm:"index"`
+	EnterpriseID int    `json:"enterprise_id" gorm:"index"`
+	Username     string `json:"username" gorm:"index:idx_qdt_model_user_name,priority:2;size:64;default:''"`
+	ModelName    string `json:"model_name" gorm:"index:idx_qdt_model_user_name,priority:1;size:64;default:''"`
+	CreatedAt    int64  `json:"created_at" gorm:"bigint;index:idx_qdt_created_at,priority:2"`
+	UseGroup     string `json:"use_group" gorm:"index;size:64;default:''"`
+	TokenID      int    `json:"token_id" gorm:"index;default:0"`
+	ChannelID    int    `json:"channel_id" gorm:"index;default:0"`
+	NodeName     string `json:"node_name" gorm:"index;size:64;default:''"`
+	TokenUsed    int    `json:"token_used" gorm:"default:0"`
+	Count        int    `json:"count" gorm:"default:0"`
+	Quota        int    `json:"quota" gorm:"default:0"`
 }
 
 type QuotaDataLogParams struct {
-	UserID    int
-	Username  string
-	ModelName string
-	Quota     int
-	CreatedAt int64
-	TokenUsed int
-	UseGroup  string
-	TokenID   int
-	ChannelID int
-	NodeName  string
+	UserID       int
+	EnterpriseID int
+	Username     string
+	ModelName    string
+	Quota        int
+	CreatedAt    int64
+	TokenUsed    int
+	UseGroup     string
+	TokenID      int
+	ChannelID    int
+	NodeName     string
 }
 
 func UpdateQuotaData() {
@@ -52,8 +54,9 @@ var CacheQuotaData = make(map[string]*QuotaData)
 var CacheQuotaDataLock = sync.Mutex{}
 
 func logQuotaDataCache(quotaData *QuotaData) {
-	key := fmt.Sprintf("%d\x00%s\x00%s\x00%d\x00%s\x00%d\x00%d\x00%s",
+	key := fmt.Sprintf("%d\x00%d\x00%s\x00%s\x00%d\x00%s\x00%d\x00%d\x00%s",
 		quotaData.UserID,
+		quotaData.EnterpriseID,
 		quotaData.Username,
 		quotaData.ModelName,
 		quotaData.CreatedAt,
@@ -79,17 +82,18 @@ func LogQuotaData(params QuotaDataLogParams) {
 	// 只精确到小时
 	createdAt := params.CreatedAt - (params.CreatedAt % 3600)
 	quotaData := &QuotaData{
-		UserID:    params.UserID,
-		Username:  params.Username,
-		ModelName: params.ModelName,
-		CreatedAt: createdAt,
-		UseGroup:  params.UseGroup,
-		TokenID:   params.TokenID,
-		ChannelID: params.ChannelID,
-		NodeName:  params.NodeName,
-		Count:     1,
-		Quota:     params.Quota,
-		TokenUsed: params.TokenUsed,
+		UserID:       params.UserID,
+		EnterpriseID: params.EnterpriseID,
+		Username:     params.Username,
+		ModelName:    params.ModelName,
+		CreatedAt:    createdAt,
+		UseGroup:     params.UseGroup,
+		TokenID:      params.TokenID,
+		ChannelID:    params.ChannelID,
+		NodeName:     params.NodeName,
+		Count:        1,
+		Quota:        params.Quota,
+		TokenUsed:    params.TokenUsed,
 	}
 
 	CacheQuotaDataLock.Lock()
@@ -108,8 +112,8 @@ func SaveQuotaDataCache() {
 	for _, quotaData := range CacheQuotaData {
 		quotaDataDB := &QuotaData{}
 		DB.Table("quota_data").
-			Where("user_id = ? and username = ? and model_name = ? and created_at = ? and use_group = ? and token_id = ? and channel_id = ? and node_name = ?",
-				quotaData.UserID, quotaData.Username, quotaData.ModelName, quotaData.CreatedAt, quotaData.UseGroup, quotaData.TokenID, quotaData.ChannelID, quotaData.NodeName).
+			Where("user_id = ? and enterprise_id = ? and username = ? and model_name = ? and created_at = ? and use_group = ? and token_id = ? and channel_id = ? and node_name = ?",
+				quotaData.UserID, quotaData.EnterpriseID, quotaData.Username, quotaData.ModelName, quotaData.CreatedAt, quotaData.UseGroup, quotaData.TokenID, quotaData.ChannelID, quotaData.NodeName).
 			First(quotaDataDB)
 		if quotaDataDB.Id > 0 {
 			//quotaDataDB.Count += quotaData.Count
@@ -126,8 +130,8 @@ func SaveQuotaDataCache() {
 
 func increaseQuotaData(quotaData *QuotaData) {
 	err := DB.Table("quota_data").
-		Where("user_id = ? and username = ? and model_name = ? and created_at = ? and use_group = ? and token_id = ? and channel_id = ? and node_name = ?",
-			quotaData.UserID, quotaData.Username, quotaData.ModelName, quotaData.CreatedAt, quotaData.UseGroup, quotaData.TokenID, quotaData.ChannelID, quotaData.NodeName).
+		Where("user_id = ? and enterprise_id = ? and username = ? and model_name = ? and created_at = ? and use_group = ? and token_id = ? and channel_id = ? and node_name = ?",
+			quotaData.UserID, quotaData.EnterpriseID, quotaData.Username, quotaData.ModelName, quotaData.CreatedAt, quotaData.UseGroup, quotaData.TokenID, quotaData.ChannelID, quotaData.NodeName).
 		Updates(map[string]interface{}{
 			"count":      gorm.Expr("count + ?", quotaData.Count),
 			"quota":      gorm.Expr("quota + ?", quotaData.Quota),

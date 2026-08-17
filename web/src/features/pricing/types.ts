@@ -48,6 +48,8 @@ export type PricingModel = {
   enable_groups: string[]
   tags?: string
   supported_endpoint_types?: string[]
+  /** Unit used by fixed-price task models, e.g. request or second. */
+  billing_unit?: 'request' | 'second'
   key?: string
   group_ratio?: Record<string, number>
   /** Billing mode (e.g. "tiered_expr") used to flag dynamic pricing */

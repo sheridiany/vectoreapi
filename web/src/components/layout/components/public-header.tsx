@@ -30,6 +30,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { useNotifications } from '@/hooks/use-notifications'
 import { useSystemConfig } from '@/hooks/use-system-config'
 import { useTopNavLinks } from '@/hooks/use-top-nav-links'
+import { PUBLIC_INTERFACE_LANGUAGE_OPTIONS } from '@/i18n/languages'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth-store'
 
@@ -58,6 +59,8 @@ export interface PublicHeaderProps {
   showNavigation?: boolean
   showAuthButtons?: boolean
   showNotifications?: boolean
+  variant?: 'default' | 'editorial'
+  useDynamicNavLinks?: boolean
   className?: string
 }
 
@@ -71,6 +74,8 @@ export function PublicHeader(props: PublicHeaderProps) {
     homeUrl = '/',
     showAuthButtons = true,
     showNotifications = true,
+    variant = 'default',
+    useDynamicNavLinks = true,
   } = props
 
   const { t } = useTranslation()
@@ -96,7 +101,75 @@ export function PublicHeader(props: PublicHeaderProps) {
   const user = auth.user
   const isAuthenticated = !!user
   const displaySiteName = customSiteName || systemName
-  const links = dynamicLinks.length > 0 ? dynamicLinks : navLinks
+  const isEditorial = variant === 'editorial'
+  const links =
+    useDynamicNavLinks && dynamicLinks.length > 0 ? dynamicLinks : navLinks
+  const getLinkLabel = (title: string) =>
+    isEditorial && title === 'FAQ' ? title : t(title)
+
+  const headerContainerClass = cn(
+    'pointer-events-auto mx-auto transition-all duration-700 ease-[cubic-bezier(0.16,1,0.3,1)]',
+    isEditorial &&
+      'relative w-full max-w-7xl px-4 pt-3 sm:px-6 md:pt-4 lg:px-8',
+    !isEditorial && scrolled && 'max-w-[52rem] px-3 pt-3',
+    !isEditorial && !scrolled && 'max-w-7xl px-4 pt-0 md:px-6'
+  )
+  const navClassName = cn(
+    'transition-all duration-700 ease-[cubic-bezier(0.16,1,0.3,1)]',
+    isEditorial &&
+      'relative mx-auto flex w-full items-center gap-4 px-4 py-2.5 lg:grid lg:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] xl:gap-6 xl:px-5 xl:py-3',
+    isEditorial &&
+      scrolled &&
+      'rounded-full border border-[#d8d1c4] bg-white/70 shadow-[0_8px_30px_-20px_rgba(92,82,74,0.35)] backdrop-blur-md dark:border-white/10 dark:bg-[#11110f]/75',
+    !isEditorial && 'flex items-center justify-between',
+    !isEditorial &&
+      scrolled &&
+      'bg-background/60 ring-border/50 h-12 rounded-2xl pr-1.5 pl-4 shadow-[0_2px_16px_-6px_rgba(0,0,0,0.08),0_0_0_0.5px_rgba(0,0,0,0.02)] ring-[0.5px] backdrop-blur-2xl dark:shadow-[0_2px_16px_-6px_rgba(0,0,0,0.4)]',
+    !isEditorial && !scrolled && 'h-16 px-2'
+  )
+
+  let logoContent: React.ReactNode
+  if (loading) {
+    logoContent = <Skeleton className='size-full rounded-lg' />
+  } else if (customLogo) {
+    logoContent = customLogo
+  } else {
+    logoContent = (
+      <HeaderLogo
+        src={systemLogo}
+        loading={loading}
+        logoLoaded={logoLoaded}
+        className='size-full rounded-lg object-contain'
+      />
+    )
+  }
+
+  let authControl: React.ReactNode
+  if (loading) {
+    authControl = <Skeleton className='h-8 w-20 rounded-lg' />
+  } else if (isEditorial) {
+    authControl = (
+      <Button
+        size='sm'
+        className='h-8 gap-1.5 rounded-xl bg-[#1f1b17] px-4 text-xs font-medium text-white hover:opacity-90 dark:bg-white dark:text-black'
+        render={<Link to='/dashboard' />}
+      >
+        {t('Console')}
+      </Button>
+    )
+  } else if (isAuthenticated) {
+    authControl = <ProfileDropdown />
+  } else {
+    authControl = (
+      <Button
+        size='sm'
+        className='h-8 rounded-lg px-3.5 text-xs font-medium'
+        render={<Link to='/sign-in' />}
+      >
+        {t('Sign in')}
+      </Button>
+    )
+  }
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 20)
@@ -166,139 +239,169 @@ export function PublicHeader(props: PublicHeaderProps) {
         return
       }
 
+      if (pathname === '/' && link.href.startsWith('/#')) {
+        const target = document.querySelector<HTMLElement>(
+          `#${link.href.slice(2)}`
+        )
+        if (target) {
+          event.preventDefault()
+          window.history.pushState({}, '', link.href)
+          target.scrollIntoView({ behavior: 'smooth', block: 'start' })
+        }
+      }
+
       if (closeMobile) {
         setMobileOpen(false)
       }
     },
-    [t]
+    [pathname, t]
   )
 
   return (
     <>
       <header className='pointer-events-none fixed inset-x-0 top-0 z-50'>
-        <div
-          className={cn(
-            'pointer-events-auto mx-auto transition-all duration-700 ease-[cubic-bezier(0.16,1,0.3,1)]',
-            scrolled ? 'max-w-[52rem] px-3 pt-3' : 'max-w-7xl px-4 pt-0 md:px-6'
-          )}
-        >
-          <nav
-            className={cn(
-              'flex items-center justify-between transition-all duration-700 ease-[cubic-bezier(0.16,1,0.3,1)]',
-              scrolled
-                ? 'bg-background/60 ring-border/50 h-12 rounded-2xl pr-1.5 pl-4 shadow-[0_2px_16px_-6px_rgba(0,0,0,0.08),0_0_0_0.5px_rgba(0,0,0,0.02)] ring-[0.5px] backdrop-blur-2xl dark:shadow-[0_2px_16px_-6px_rgba(0,0,0,0.4)]'
-                : 'h-16 px-2'
-            )}
-          >
+        <div className={headerContainerClass}>
+          <nav className={navClassName}>
             {/* Logo */}
             <Link
               to={homeUrl}
               className='group flex shrink-0 items-center gap-2.5'
             >
-              <div className='flex size-7 shrink-0 items-center justify-center transition-all duration-300 group-hover:scale-105'>
-                {loading ? (
-                  <Skeleton className='size-full rounded-lg' />
-                ) : customLogo ? (
-                  customLogo
-                ) : (
-                  <HeaderLogo
-                    src={systemLogo}
-                    loading={loading}
-                    logoLoaded={logoLoaded}
-                    className='size-full rounded-lg object-contain'
-                  />
+              <div
+                className={cn(
+                  'flex shrink-0 items-center justify-center transition-all duration-300 group-hover:scale-105',
+                  isEditorial ? 'size-8 xl:size-9' : 'size-7'
                 )}
+              >
+                {logoContent}
               </div>
-              <span className='text-sm font-semibold tracking-tight'>
+              <span
+                className={cn(
+                  isEditorial
+                    ? 'font-serif text-[1.25rem] font-medium tracking-normal xl:text-[1.5rem]'
+                    : 'font-sans text-sm font-semibold tracking-tight'
+                )}
+              >
                 {loading ? <Skeleton className='h-4 w-16' /> : displaySiteName}
               </span>
             </Link>
 
             {/* Desktop nav */}
-            <div className='hidden items-center gap-0.5 sm:flex'>
-              {links.map((link, i) => {
-                const isActive = pathname === link.href
-                if (link.external) {
+            <div
+              className={cn(
+                isEditorial
+                  ? 'hidden items-center justify-center lg:contents'
+                  : 'hidden items-center gap-0.5 sm:flex'
+              )}
+            >
+              <div
+                className={cn(
+                  isEditorial
+                    ? 'flex items-center justify-center gap-0.5 xl:gap-1'
+                    : 'contents'
+                )}
+              >
+                {links.map((link) => {
+                  const isActive = pathname === link.href
+                  const linkClassName = cn(
+                    isEditorial
+                      ? 'rounded-full px-3 py-1.5 text-xs font-medium text-muted-foreground transition hover:text-foreground xl:px-4 xl:py-2 xl:text-sm'
+                      : 'rounded-lg px-3 py-1.5 text-sm font-medium transition-colors duration-200',
+                    !isEditorial &&
+                      (isActive
+                        ? 'text-foreground'
+                        : 'text-muted-foreground hover:text-foreground'),
+                    link.disabled && 'pointer-events-none opacity-50'
+                  )
+                  if (link.external) {
+                    return (
+                      <a
+                        key={link.href}
+                        href={link.href}
+                        target='_blank'
+                        rel='noopener noreferrer'
+                        aria-disabled={link.disabled}
+                        tabIndex={link.disabled ? -1 : undefined}
+                        onClick={(event) => handleNavLinkClick(event, link)}
+                        className={linkClassName}
+                      >
+                        {getLinkLabel(link.title)}
+                      </a>
+                    )
+                  }
                   return (
-                    <a
-                      key={i}
-                      href={link.href}
-                      target='_blank'
-                      rel='noopener noreferrer'
-                      aria-disabled={link.disabled}
-                      tabIndex={link.disabled ? -1 : undefined}
+                    <Link
+                      key={link.href}
+                      to={link.href}
+                      disabled={link.disabled}
                       onClick={(event) => handleNavLinkClick(event, link)}
                       className={cn(
-                        'text-muted-foreground hover:text-foreground rounded-lg px-3 py-1.5 text-sm font-medium transition-colors duration-200',
-                        link.disabled && 'pointer-events-none opacity-50'
+                        linkClassName,
+                        isEditorial && isActive && 'text-foreground'
                       )}
                     >
-                      {t(link.title)}
-                    </a>
+                      {getLinkLabel(link.title)}
+                    </Link>
                   )
-                }
-                return (
-                  <Link
-                    key={i}
-                    to={link.href}
-                    disabled={link.disabled}
-                    onClick={(event) => handleNavLinkClick(event, link)}
-                    className={cn(
-                      'rounded-lg px-3 py-1.5 text-sm font-medium transition-colors duration-200',
-                      isActive
-                        ? 'text-foreground'
-                        : 'text-muted-foreground hover:text-foreground',
-                      link.disabled && 'pointer-events-none opacity-50'
+                })}
+              </div>
+
+              <div
+                className={cn(
+                  'flex items-center',
+                  isEditorial
+                    ? 'relative z-10 justify-self-end gap-2 xl:gap-3'
+                    : 'gap-0.5'
+                )}
+              >
+                {(showLanguageSwitcher ||
+                  showThemeSwitch ||
+                  showNotifications) && (
+                  <div className='bg-border/40 mx-2 h-4 w-px' />
+                )}
+
+                {showLanguageSwitcher && (
+                  <LanguageSwitcher
+                    compact={isEditorial}
+                    options={
+                      isEditorial
+                        ? PUBLIC_INTERFACE_LANGUAGE_OPTIONS
+                        : undefined
+                    }
+                  />
+                )}
+                {showThemeSwitch && <ThemeSwitch compact={isEditorial} />}
+                {showNotifications && (
+                  <NotificationPopover
+                    open={notifications.popoverOpen}
+                    onOpenChange={notifications.setPopoverOpen}
+                    unreadCount={notifications.unreadCount}
+                    activeTab={notifications.activeTab}
+                    onTabChange={notifications.setActiveTab}
+                    notice={notifications.notice}
+                    announcements={notifications.announcements}
+                    loading={notifications.loading}
+                  />
+                )}
+
+                {showAuthButtons && (
+                  <>
+                    {!isEditorial && (
+                      <div className='bg-border/40 mx-1 h-4 w-px' />
                     )}
-                  >
-                    {t(link.title)}
-                  </Link>
-                )
-              })}
-
-              {(showLanguageSwitcher ||
-                showThemeSwitch ||
-                showNotifications) && (
-                <div className='bg-border/40 mx-2 h-4 w-px' />
-              )}
-
-              {showLanguageSwitcher && <LanguageSwitcher />}
-              {showThemeSwitch && <ThemeSwitch />}
-              {showNotifications && (
-                <NotificationPopover
-                  open={notifications.popoverOpen}
-                  onOpenChange={notifications.setPopoverOpen}
-                  unreadCount={notifications.unreadCount}
-                  activeTab={notifications.activeTab}
-                  onTabChange={notifications.setActiveTab}
-                  notice={notifications.notice}
-                  announcements={notifications.announcements}
-                  loading={notifications.loading}
-                />
-              )}
-
-              {showAuthButtons && (
-                <>
-                  <div className='bg-border/40 mx-1 h-4 w-px' />
-                  {loading ? (
-                    <Skeleton className='h-8 w-20 rounded-lg' />
-                  ) : isAuthenticated ? (
-                    <ProfileDropdown />
-                  ) : (
-                    <Button
-                      size='sm'
-                      className='h-8 rounded-lg px-3.5 text-xs font-medium'
-                      render={<Link to='/sign-in' />}
-                    >
-                      {t('Sign in')}
-                    </Button>
-                  )}
-                </>
-              )}
+                    {authControl}
+                  </>
+                )}
+              </div>
             </div>
 
             {/* Mobile: compact actions + hamburger */}
-            <div className='flex items-center gap-2 sm:hidden'>
+            <div
+              className={cn(
+                'ml-auto flex items-center gap-2',
+                isEditorial ? 'lg:hidden' : 'sm:hidden'
+              )}
+            >
               {showThemeSwitch && <ThemeSwitch />}
               {showAuthButtons && !loading && isAuthenticated && (
                 <ProfileDropdown />
@@ -340,7 +443,10 @@ export function PublicHeader(props: PublicHeaderProps) {
       {/* Mobile full-screen overlay */}
       <div
         className={cn(
-          'bg-background/98 fixed inset-0 z-40 backdrop-blur-2xl transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] sm:pointer-events-none sm:hidden',
+          'bg-background/98 fixed inset-0 z-40 backdrop-blur-2xl transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]',
+          isEditorial
+            ? 'lg:pointer-events-none lg:hidden'
+            : 'sm:pointer-events-none sm:hidden',
           mobileOpen
             ? 'pointer-events-auto opacity-100'
             : 'pointer-events-none opacity-0'
@@ -364,7 +470,7 @@ export function PublicHeader(props: PublicHeaderProps) {
               if (link.external) {
                 return (
                   <a
-                    key={i}
+                    key={link.href}
                     href={link.href}
                     target='_blank'
                     rel='noopener noreferrer'
@@ -374,20 +480,20 @@ export function PublicHeader(props: PublicHeaderProps) {
                     className={linkClassName}
                     style={transitionStyle}
                   >
-                    {t(link.title)}
+                    {getLinkLabel(link.title)}
                   </a>
                 )
               }
               return (
                 <Link
-                  key={i}
+                  key={link.href}
                   to={link.href}
                   disabled={link.disabled}
                   onClick={(event) => handleNavLinkClick(event, link, true)}
                   className={linkClassName}
                   style={transitionStyle}
                 >
-                  {t(link.title)}
+                  {getLinkLabel(link.title)}
                 </Link>
               )
             })}

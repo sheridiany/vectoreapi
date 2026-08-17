@@ -33,13 +33,18 @@ function OAuthComponent() {
     provider?: 'github' | 'discord' | 'oidc' | 'linuxdo' | 'telegram' | 'wechat'
     code?: string
     state?: string
+    enterprise_code?: string
+    enterprise_invitation_code?: string
   }
 
   useEffect(() => {
     ;(async () => {
       try {
         if (search?.provider === 'wechat' && search.code) {
-          const res = await wechatLoginByCode(search.code)
+          const res = await wechatLoginByCode(search.code, {
+            enterpriseCode: search.enterprise_code ?? '',
+            enterpriseInvitationCode: search.enterprise_invitation_code ?? '',
+          })
           if (res?.success && isAuthBundle(res.data)) {
             applyAuthBundle(res.data)
             const target =

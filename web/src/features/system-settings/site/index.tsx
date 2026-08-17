@@ -26,7 +26,7 @@ import {
 
 const defaultSiteSettings: SiteSettings = {
   Notice: '',
-  SystemName: 'New API',
+  SystemName: '向量纪元 Relay',
   Logo: '',
   Footer: '',
   About: '',

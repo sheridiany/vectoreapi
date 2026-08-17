@@ -32,6 +32,7 @@ export {
   githubOAuthStart,
   wechatLoginByCode,
   telegramLogin,
+  getEnterpriseRegistrationOptions,
 } from './api'
 
 // ============================================================================
@@ -51,6 +52,8 @@ export type {
   SystemStatus,
   OAuthProvider,
   AuthFormProps,
+  EnterpriseRegistrationContext,
+  RegistrationEnterpriseOption,
 } from './types'
 
 // ============================================================================

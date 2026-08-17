@@ -60,7 +60,10 @@ func authHelper(c *gin.Context, minRole int) {
 		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"success": false, "code": "AUTH_USER_INVALID", "message": common.TranslateMessage(c, i18n.MsgAuthUserInfoInvalid)})
 		return
 	}
-	setDashboardAuthContext(c, user, identity, useAccessToken)
+	if !setDashboardAuthContext(c, user, identity, useAccessToken) {
+		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"success": false, "code": "AUTH_ENTERPRISE_MEMBERSHIP_DISABLED", "message": common.TranslateMessage(c, i18n.MsgAuthInsufficientPrivilege)})
+		return
+	}
 
 	// 管理/root 写操作审计兜底：内聚在鉴权链路里，保证任何经过 AdminAuth/RootAuth
 	// 的写接口都会自动留痕（无需在路由上单独挂审计中间件，避免漏挂）。
@@ -83,7 +86,10 @@ func TryUserAuth() func(c *gin.Context) {
 			return
 		}
 		if credentialKind != dashboardCredentialUnmatched {
-			setDashboardAuthContext(c, user, identity, credentialKind == dashboardCredentialPAT)
+			if !setDashboardAuthContext(c, user, identity, credentialKind == dashboardCredentialPAT) {
+				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"success": false, "code": "AUTH_ENTERPRISE_MEMBERSHIP_DISABLED", "message": common.TranslateMessage(c, i18n.MsgAuthInsufficientPrivilege)})
+				return
+			}
 		}
 		c.Next()
 	}
@@ -191,7 +197,7 @@ func authorizationToken(header string) (string, bool) {
 	return header, header != ""
 }
 
-func setDashboardAuthContext(c *gin.Context, user *model.UserBase, identity service.AuthIdentity, useAccessToken bool) {
+func setDashboardAuthContext(c *gin.Context, user *model.UserBase, identity service.AuthIdentity, useAccessToken bool) bool {
 	c.Header("Auth-Version", "864b7076dbcd0a3c01b5520316720ebf")
 	c.Set("username", user.Username)
 	c.Set("role", user.Role)
@@ -204,6 +210,37 @@ func setDashboardAuthContext(c *gin.Context, user *model.UserBase, identity serv
 	c.Set("session_version", identity.SessionVersion)
 	c.Set(authIdentityContextKey, identity)
 	user.WriteContext(c)
+	return setEnterpriseAuthContext(c, user.Id)
+}
+
+func setEnterpriseAuthContext(c *gin.Context, userID int) bool {
+	if userID <= 0 || model.DB == nil {
+		return true
+	}
+	var membership model.EnterpriseMembership
+	err := model.DB.Where("user_id = ?", userID).First(&membership).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return true
+		}
+		common.SysLog(fmt.Sprintf("failed to load enterprise membership for user %d: %v", userID, err))
+		return false
+	}
+	if membership.Status != model.EnterpriseMembershipStatusActive {
+		return false
+	}
+	enterprise, err := model.GetEnterpriseByID(membership.EnterpriseID)
+	if err != nil {
+		common.SysLog(fmt.Sprintf("failed to load enterprise %d for user %d: %v", membership.EnterpriseID, userID, err))
+		return false
+	}
+	if enterprise.Status != model.EnterpriseStatusEnabled {
+		return false
+	}
+	common.SetContextKey(c, constant.ContextKeyEnterpriseId, membership.EnterpriseID)
+	common.SetContextKey(c, constant.ContextKeyEnterpriseMembershipId, membership.Id)
+	common.SetContextKey(c, constant.ContextKeyEnterpriseRole, membership.Role)
+	return true
 }
 
 func writeDashboardAuthError(c *gin.Context, err error) {
@@ -263,7 +300,10 @@ func TokenOrUserAuth() func(c *gin.Context) {
 				writeDashboardAuthError(c, err)
 				return
 			}
-			setDashboardAuthContext(c, user, identity, false)
+			if !setDashboardAuthContext(c, user, identity, false) {
+				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"success": false, "code": "AUTH_ENTERPRISE_MEMBERSHIP_DISABLED", "message": common.TranslateMessage(c, i18n.MsgAuthInsufficientPrivilege)})
+				return
+			}
 			c.Next()
 			return
 		}
@@ -345,6 +385,10 @@ func TokenAuthReadOnly() func(c *gin.Context) {
 		c.Set("id", token.UserId)
 		c.Set("token_id", token.Id)
 		c.Set("token_key", token.Key)
+		if !setEnterpriseAuthContext(c, token.UserId) {
+			abortWithOpenAiMessage(c, http.StatusForbidden, common.TranslateMessage(c, i18n.MsgAuthInsufficientPrivilege), types.ErrorCodeAccessDenied)
+			return
+		}
 		c.Next()
 	}
 }
@@ -455,6 +499,7 @@ func TokenAuth() func(c *gin.Context) {
 		}
 
 		userCache.WriteContext(c)
+		setEnterpriseAuthContext(c, token.UserId)
 
 		userGroup := userCache.Group
 		tokenGroup := token.Group

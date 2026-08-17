@@ -262,6 +262,11 @@ func migrateDB() error {
 		&Channel{},
 		&Token{},
 		&User{},
+		&Enterprise{},
+		&EnterpriseMembership{},
+		&EnterpriseInvitation{},
+		&EnterpriseKeyPolicyOperation{},
+		&EnterpriseKeyPolicyTokenChange{},
 		&UserSession{},
 		&AuthFlow{},
 		&ExternalIdentityClaim{},
@@ -325,6 +330,11 @@ func migrateDBFast() error {
 		{&Channel{}, "Channel"},
 		{&Token{}, "Token"},
 		{&User{}, "User"},
+		{&Enterprise{}, "Enterprise"},
+		{&EnterpriseMembership{}, "EnterpriseMembership"},
+		{&EnterpriseInvitation{}, "EnterpriseInvitation"},
+		{&EnterpriseKeyPolicyOperation{}, "EnterpriseKeyPolicyOperation"},
+		{&EnterpriseKeyPolicyTokenChange{}, "EnterpriseKeyPolicyTokenChange"},
 		{&UserSession{}, "UserSession"},
 		{&AuthFlow{}, "AuthFlow"},
 		{&ExternalIdentityClaim{}, "ExternalIdentityClaim"},
@@ -408,6 +418,9 @@ func migrateClickHouseLogDB() error {
 	if err := LOG_DB.Exec(clickHouseLogCreateTableSQL(ttlDays)).Error; err != nil {
 		return err
 	}
+	if err := LOG_DB.Exec("ALTER TABLE logs ADD COLUMN IF NOT EXISTS enterprise_id Int32 DEFAULT 0").Error; err != nil {
+		return err
+	}
 	return syncClickHouseLogTTL(ttlDays)
 }
 
@@ -439,6 +452,7 @@ func clickHouseLogCreateTableSQL(ttlDays int) string {
 CREATE TABLE IF NOT EXISTS logs (
 	id Int64 DEFAULT 0,
 	user_id Int32 DEFAULT 0,
+	enterprise_id Int32 DEFAULT 0,
 	created_at Int64 DEFAULT 0,
 	type Int32 DEFAULT 0,
 	content String DEFAULT '',

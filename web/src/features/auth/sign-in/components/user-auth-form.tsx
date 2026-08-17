@@ -62,6 +62,7 @@ import { useAuthStore } from '@/stores/auth-store'
 export function UserAuthForm({
   className,
   redirectTo,
+  enterpriseContext,
   ...props
 }: AuthFormProps) {
   const { t } = useTranslation()
@@ -222,7 +223,7 @@ export function UserAuthForm({
 
     setIsWeChatSubmitting(true)
     try {
-      const res = await wechatLoginByCode(wechatCode)
+      const res = await wechatLoginByCode(wechatCode, enterpriseContext)
       if (res?.success && isAuthBundle(res.data)) {
         await handleLoginSuccess(res.data, redirectTo)
         toast.success(t('Signed in via WeChat'))
@@ -344,6 +345,7 @@ export function UserAuthForm({
         disabled={isLoading || (requiresLegalConsent && !agreedToLegal)}
         onWeChatLogin={hasWeChatLogin ? handleOpenWeChatDialog : undefined}
         isWeChatLoading={isWeChatSubmitting}
+        enterpriseContext={enterpriseContext}
       />
     </>
   )

@@ -27,8 +27,15 @@ import { UserAuthForm } from './components/user-auth-form'
 
 export function SignIn() {
   const { t } = useTranslation()
-  const { redirect } = useSearch({ from: '/(auth)/sign-in' })
+  const search = useSearch({ from: '/(auth)/sign-in' })
   const { status } = useStatus()
+  const enterpriseContext = search.enterprise_code
+    ? {
+        enterpriseCode: search.enterprise_code,
+        enterpriseInvitationCode:
+          search.enterprise_invitation_code || undefined,
+      }
+    : undefined
 
   return (
     <AuthLayout>
@@ -52,7 +59,10 @@ export function SignIn() {
             )}
         </div>
 
-        <UserAuthForm redirectTo={redirect} />
+        <UserAuthForm
+          redirectTo={search.redirect}
+          enterpriseContext={enterpriseContext}
+        />
 
         <TermsFooter
           variant='sign-in'

@@ -6,12 +6,16 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 type wechatLoginResponse struct {
@@ -89,18 +93,34 @@ func WeChatAuth(c *gin.Context) {
 		}
 	} else {
 		if common.RegisterEnabled {
+			enterpriseCode := strings.TrimSpace(c.Query("enterprise_code"))
+			enterpriseInvitationCode := strings.TrimSpace(c.Query("enterprise_invitation_code"))
+			if enterpriseCode == "" {
+				c.JSON(http.StatusOK, gin.H{
+					"success": false,
+					"message": i18n.T(c, i18n.MsgEnterpriseRegistrationRequired),
+				})
+				return
+			}
 			user.Username = "wechat_" + strconv.Itoa(model.GetMaxUserId()+1)
 			user.DisplayName = "WeChat User"
 			user.Role = common.RoleCommonUser
 			user.Status = common.UserStatusEnabled
 
-			if err := user.Insert(0); err != nil {
+			if err := model.DB.Transaction(func(tx *gorm.DB) error {
+				if err := user.InsertWithTx(tx, 0); err != nil {
+					return err
+				}
+				_, err := service.JoinEnterpriseWithTx(tx, enterpriseCode, enterpriseInvitationCode, user.Id)
+				return err
+			}); err != nil {
 				c.JSON(http.StatusOK, gin.H{
 					"success": false,
 					"message": err.Error(),
 				})
 				return
 			}
+			user.FinalizeOAuthUserCreation(0)
 		} else {
 			c.JSON(http.StatusOK, gin.H{
 				"success": false,

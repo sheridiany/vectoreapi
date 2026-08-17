@@ -203,6 +203,12 @@ func setupLoginAtAuthVersion(user *model.User, expectedAuthVersion int64, c *gin
 	})
 }
 
+type registerRequest struct {
+	model.User
+	EnterpriseCode           string `json:"enterprise_code"`
+	EnterpriseInvitationCode string `json:"enterprise_invitation_code"`
+}
+
 func Register(c *gin.Context) {
 	if !common.RegisterEnabled {
 		common.ApiErrorI18n(c, i18n.MsgUserRegisterDisabled)
@@ -212,10 +218,17 @@ func Register(c *gin.Context) {
 		common.ApiErrorI18n(c, i18n.MsgUserPasswordRegisterDisabled)
 		return
 	}
-	var user model.User
-	err := common.DecodeJson(c.Request.Body, &user)
+	var request registerRequest
+	err := common.DecodeJson(c.Request.Body, &request)
 	if err != nil {
 		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	user := request.User
+	request.EnterpriseCode = strings.TrimSpace(request.EnterpriseCode)
+	request.EnterpriseInvitationCode = strings.TrimSpace(request.EnterpriseInvitationCode)
+	if request.EnterpriseCode == "" {
+		common.ApiErrorI18n(c, i18n.MsgEnterpriseRegistrationRequired)
 		return
 	}
 	user.Username = strings.TrimSpace(user.Username)
@@ -272,7 +285,13 @@ func Register(c *gin.Context) {
 	if common.EmailVerificationEnabled {
 		cleanUser.Email = user.Email
 	}
-	if err := cleanUser.Insert(inviterId); err != nil {
+	if err := model.DB.Transaction(func(tx *gorm.DB) error {
+		if err := cleanUser.InsertWithTx(tx, inviterId); err != nil {
+			return err
+		}
+		_, err := service.JoinEnterpriseWithTx(tx, request.EnterpriseCode, request.EnterpriseInvitationCode, cleanUser.Id)
+		return err
+	}); err != nil {
 		if errors.Is(err, model.ErrEmailAlreadyTaken) {
 			common.ApiErrorI18n(c, i18n.MsgUserEmailAlreadyTaken)
 			return
@@ -280,6 +299,7 @@ func Register(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	cleanUser.FinishInsert(inviterId)
 
 	// 获取插入后的用户ID
 	var insertedUser model.User
@@ -509,6 +529,18 @@ func buildSelfUserData(user *model.User) map[string]interface{} {
 	userSetting := user.GetSetting()
 	permissions := calculateUserPermissions(user.Role)
 	permissions["admin_permissions"] = authz.Capabilities(user.Id, user.Role)
+	var enterpriseData map[string]interface{}
+	if membership, err := model.GetEnterpriseMembershipByUserID(user.Id); err == nil {
+		if enterprise, enterpriseErr := model.GetEnterpriseByID(membership.EnterpriseID); enterpriseErr == nil && enterprise.Status == model.EnterpriseStatusEnabled {
+			enterpriseData = map[string]interface{}{
+				"id":            enterprise.Id,
+				"name":          enterprise.Name,
+				"code":          enterprise.Code,
+				"role":          membership.Role,
+				"membership_id": membership.Id,
+			}
+		}
+	}
 	return map[string]interface{}{
 		"id":                user.Id,
 		"username":          user.Username,
@@ -535,6 +567,7 @@ func buildSelfUserData(user *model.User) map[string]interface{} {
 		"stripe_customer":   user.StripeCustomer,
 		"sidebar_modules":   userSetting.SidebarModules, // 正确提取sidebar_modules字段
 		"permissions":       permissions,
+		"enterprise":        enterpriseData,
 	}
 }
 

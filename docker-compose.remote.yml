@@ -1,0 +1,52 @@
+name: vector-epoch-relay-new-api
+
+services:
+  new-api-postgres:
+    image: postgres:15-alpine
+    container_name: vector-epoch-relay-new-api-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: root
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: new-api
+    volumes:
+      - new_api_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U root -d new-api"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  new-api-redis:
+    image: redis:7-alpine
+    container_name: vector-epoch-relay-new-api-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - new_api_redis_data:/data
+
+  new-api:
+    image: vector-epoch-relay-new-api:local
+    container_name: vector-epoch-relay-new-api
+    restart: unless-stopped
+    ports:
+      - "3001:3000"
+    volumes:
+      - new_api_app_data:/data
+    environment:
+      SQL_DSN: postgresql://root:${POSTGRES_PASSWORD}@new-api-postgres:5432/new-api?sslmode=disable
+      REDIS_CONN_STRING: redis://new-api-redis:6379
+      TZ: Asia/Shanghai
+      BATCH_UPDATE_ENABLED: "true"
+      SESSION_COOKIE_SECURE: "false"
+      TASK_PRICE_PATCH: "seedance-2.0,seedance-2.0-fast"
+    depends_on:
+      new-api-postgres:
+        condition: service_healthy
+      new-api-redis:
+        condition: service_started
+
+volumes:
+  new_api_postgres_data:
+  new_api_redis_data:
+  new_api_app_data:

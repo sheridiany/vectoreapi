@@ -33,6 +33,7 @@ type Pricing struct {
 	AudioCompletionRatio   *float64                `json:"audio_completion_ratio,omitempty"`
 	EnableGroup            []string                `json:"enable_groups"`
 	SupportedEndpointTypes []constant.EndpointType `json:"supported_endpoint_types"`
+	BillingUnit            string                  `json:"billing_unit,omitempty"`
 	BillingMode            string                  `json:"billing_mode,omitempty"`
 	BillingExpr            string                  `json:"billing_expr,omitempty"`
 	PricingVersion         string                  `json:"pricing_version,omitempty"`
@@ -175,6 +176,23 @@ func appendPricingEndpoint(endpoints []string, endpoint string) []string {
 		return endpoints
 	}
 	return append(endpoints, endpoint)
+}
+
+func pricingBillingUnit(modelName string, endpoints []constant.EndpointType) string {
+	hasVideoEndpoint := false
+	for _, endpoint := range endpoints {
+		if endpoint == constant.EndpointTypeOpenAIVideo {
+			hasVideoEndpoint = true
+			break
+		}
+	}
+	if !hasVideoEndpoint {
+		return ""
+	}
+	if common.StringsContains(constant.TaskPricePatches, modelName) {
+		return "request"
+	}
+	return "second"
 }
 
 func updatePricing() {
@@ -360,6 +378,7 @@ func updatePricing() {
 			ModelName:              model,
 			EnableGroup:            groups.Items(),
 			SupportedEndpointTypes: modelSupportEndpointTypes[model],
+			BillingUnit:            pricingBillingUnit(model, modelSupportEndpointTypes[model]),
 		}
 
 		// 补充模型元数据（描述、标签、供应商、状态）

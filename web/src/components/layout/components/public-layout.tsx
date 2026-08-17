@@ -37,6 +37,7 @@ export function PublicLayout(props: PublicLayoutProps) {
     <div className='bg-background text-foreground relative min-h-svh overflow-x-clip'>
       <PublicHeader
         navContent={props.navContent}
+        variant='editorial'
         navLinks={props.navLinks}
         showThemeSwitch={props.showThemeSwitch}
         showAuthButtons={props.showAuthButtons}

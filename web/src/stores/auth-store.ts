@@ -48,6 +48,13 @@ export interface AuthUser {
   wechat_id?: string
   telegram_id?: string
   linux_do_id?: string
+  enterprise?: {
+    id: number
+    name: string
+    code: string
+    membership_id: number
+    role: 'owner' | 'admin' | 'member' | 'auditor'
+  }
   language?: string
   setting?: Record<string, unknown> | string
   stripe_customer?: string

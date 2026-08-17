@@ -13,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/oauth"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -20,13 +21,17 @@ import (
 const oauthAuthFlowTTL = 10 * time.Minute
 
 type oauthStateRequest struct {
-	Provider string `json:"provider"`
-	Intent   string `json:"intent"`
-	Aff      string `json:"aff,omitempty"`
+	Provider                 string `json:"provider"`
+	Intent                   string `json:"intent"`
+	Aff                      string `json:"aff,omitempty"`
+	EnterpriseCode           string `json:"enterprise_code,omitempty"`
+	EnterpriseInvitationCode string `json:"enterprise_invitation_code,omitempty"`
 }
 
 type oauthFlowPayload struct {
-	AffiliateCode string `json:"affiliate_code,omitempty"`
+	AffiliateCode            string `json:"affiliate_code,omitempty"`
+	EnterpriseCode           string `json:"enterprise_code,omitempty"`
+	EnterpriseInvitationCode string `json:"enterprise_invitation_code,omitempty"`
 }
 
 // providerParams returns map with Provider key for i18n templates
@@ -44,10 +49,14 @@ func GenerateOAuthCode(c *gin.Context) {
 	request.Provider = strings.TrimSpace(request.Provider)
 	request.Intent = strings.TrimSpace(request.Intent)
 	request.Aff = strings.TrimSpace(request.Aff)
+	request.EnterpriseCode = strings.TrimSpace(request.EnterpriseCode)
+	request.EnterpriseInvitationCode = strings.TrimSpace(request.EnterpriseInvitationCode)
 	if oauth.GetProvider(request.Provider) == nil ||
 		(request.Intent != model.AuthFlowIntentLogin && request.Intent != model.AuthFlowIntentBind) ||
 		len(request.Aff) > 32 ||
-		(request.Intent == model.AuthFlowIntentBind && request.Aff != "") {
+		(request.Intent == model.AuthFlowIntentBind && (request.Aff != "" || request.EnterpriseCode != "" || request.EnterpriseInvitationCode != "")) ||
+		(request.EnterpriseCode == "" && request.EnterpriseInvitationCode != "") ||
+		len(request.EnterpriseCode) > 64 || len(request.EnterpriseInvitationCode) > 256 {
 		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return
 	}
@@ -62,7 +71,11 @@ func GenerateOAuthCode(c *gin.Context) {
 		userID = identity.UserID
 		sessionID = identity.SessionID
 	}
-	payload, err := common.Marshal(oauthFlowPayload{AffiliateCode: request.Aff})
+	payload, err := common.Marshal(oauthFlowPayload{
+		AffiliateCode:            request.Aff,
+		EnterpriseCode:           request.EnterpriseCode,
+		EnterpriseInvitationCode: request.EnterpriseInvitationCode,
+	})
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -193,7 +206,7 @@ func HandleOAuth(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	user, err := findOrCreateOAuthUser(c, provider, oauthUser, payload.AffiliateCode)
+	user, err := findOrCreateOAuthUser(c, provider, oauthUser, payload)
 	if err != nil {
 		if errors.Is(err, model.ErrEmailAlreadyTaken) {
 			common.ApiErrorI18n(c, i18n.MsgUserEmailAlreadyTaken)
@@ -204,6 +217,8 @@ func HandleOAuth(c *gin.Context) {
 			common.ApiErrorI18n(c, i18n.MsgOAuthUserDeleted)
 		case *OAuthRegistrationDisabledError:
 			common.ApiErrorI18n(c, i18n.MsgUserRegisterDisabled)
+		case *EnterpriseRegistrationRequiredError:
+			common.ApiErrorI18n(c, i18n.MsgEnterpriseRegistrationRequired)
 		case *OAuthEmailAlreadyTakenError:
 			common.ApiErrorI18n(c, i18n.MsgUserEmailAlreadyTaken)
 		default:
@@ -289,7 +304,7 @@ func handleOAuthBind(c *gin.Context, provider oauth.Provider, pendingFlow *model
 }
 
 // findOrCreateOAuthUser finds existing user or creates new user
-func findOrCreateOAuthUser(c *gin.Context, provider oauth.Provider, oauthUser *oauth.OAuthUser, affiliateCode string) (*model.User, error) {
+func findOrCreateOAuthUser(c *gin.Context, provider oauth.Provider, oauthUser *oauth.OAuthUser, payload oauthFlowPayload) (*model.User, error) {
 	user := &model.User{}
 
 	// Check if user already exists with new ID
@@ -363,8 +378,11 @@ func findOrCreateOAuthUser(c *gin.Context, provider oauth.Provider, oauthUser *o
 
 	// Handle affiliate code
 	inviterId := 0
-	if affiliateCode != "" {
-		inviterId, _ = model.GetUserIdByAffCode(affiliateCode)
+	if payload.AffiliateCode != "" {
+		inviterId, _ = model.GetUserIdByAffCode(payload.AffiliateCode)
+	}
+	if payload.EnterpriseCode == "" {
+		return nil, &EnterpriseRegistrationRequiredError{}
 	}
 
 	// Use transaction to ensure user creation and OAuth binding are atomic
@@ -373,6 +391,9 @@ func findOrCreateOAuthUser(c *gin.Context, provider oauth.Provider, oauthUser *o
 		err := model.DB.Transaction(func(tx *gorm.DB) error {
 			// Create user
 			if err := user.InsertWithTx(tx, inviterId); err != nil {
+				return err
+			}
+			if _, err := service.JoinEnterpriseWithTx(tx, payload.EnterpriseCode, payload.EnterpriseInvitationCode, user.Id); err != nil {
 				return err
 			}
 
@@ -399,6 +420,9 @@ func findOrCreateOAuthUser(c *gin.Context, provider oauth.Provider, oauthUser *o
 		err := model.DB.Transaction(func(tx *gorm.DB) error {
 			// Create user
 			if err := user.InsertWithTx(tx, inviterId); err != nil {
+				return err
+			}
+			if _, err := service.JoinEnterpriseWithTx(tx, payload.EnterpriseCode, payload.EnterpriseInvitationCode, user.Id); err != nil {
 				return err
 			}
 
@@ -441,6 +465,12 @@ func (e *OAuthRegistrationDisabledError) Error() string {
 	return "registration is disabled"
 }
 
+type EnterpriseRegistrationRequiredError struct{}
+
+func (e *EnterpriseRegistrationRequiredError) Error() string {
+	return "enterprise registration context is required"
+}
+
 type OAuthEmailAlreadyTakenError struct{}
 
 func (e *OAuthEmailAlreadyTakenError) Error() string {
@@ -460,6 +490,8 @@ func handleOAuthError(c *gin.Context, err error) {
 		common.ApiErrorMsg(c, e.Message)
 	case *oauth.TrustLevelError:
 		common.ApiErrorI18n(c, i18n.MsgOAuthTrustLevelLow)
+	case *EnterpriseRegistrationRequiredError:
+		common.ApiErrorI18n(c, i18n.MsgEnterpriseRegistrationRequired)
 	default:
 		common.ApiError(c, err)
 	}

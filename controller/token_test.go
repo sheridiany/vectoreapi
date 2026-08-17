@@ -109,6 +109,9 @@ func setupTokenControllerTestDB(t *testing.T) *gorm.DB {
 
 	db := openTokenControllerTestDB(t)
 	migrateTokenControllerTestDB(t, db)
+	if err := db.AutoMigrate(&model.Enterprise{}, &model.EnterpriseMembership{}); err != nil {
+		t.Fatalf("failed to migrate enterprise membership tables: %v", err)
+	}
 	return db
 }
 

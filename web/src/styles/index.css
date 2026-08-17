@@ -243,6 +243,85 @@ For commercial licensing, please contact support@quantumnous.com
 .CollapsibleContent {
   overflow: hidden;
 }
+
+.home-hero-diagonal-grid {
+  background-image: repeating-linear-gradient(
+    135deg,
+    transparent 0 62px,
+    rgba(92, 82, 74, 0.12) 62px 63px,
+    transparent 63px 126px
+  );
+  transform: rotate(-8deg) scale(1.15);
+}
+
+.dark .home-hero-diagonal-grid {
+  background-image: repeating-linear-gradient(
+    135deg,
+    transparent 0 62px,
+    rgba(245, 241, 234, 0.12) 62px 63px,
+    transparent 63px 126px
+  );
+}
+
+@keyframes home-logo-marquee-left {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    transform: translate3d(-33.3333%, 0, 0);
+  }
+}
+
+@keyframes home-logo-marquee-right {
+  from {
+    transform: translate3d(-33.3333%, 0, 0);
+  }
+  to {
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+.home-logo-marquee__track {
+  display: flex;
+  width: max-content;
+  min-width: 100%;
+  will-change: transform;
+}
+
+.home-logo-marquee__track--left {
+  animation: home-logo-marquee-left 34s linear infinite;
+}
+
+.home-logo-marquee__track--right {
+  animation: home-logo-marquee-right 40s linear infinite;
+}
+
+.home-logo-marquee__set {
+  display: flex;
+  flex: 0 0 auto;
+  justify-content: space-around;
+  gap: 2.5rem;
+  min-width: 100vw;
+  padding-inline: 1.5rem;
+}
+
+.home-logo-marquee__mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.home-logo-marquee:hover .home-logo-marquee__track {
+  animation-play-state: paused;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .home-logo-marquee__track {
+    animation: none;
+    transform: none;
+  }
+}
+
 @media (prefers-reduced-motion: no-preference) {
   .CollapsibleContent[data-open] {
     animation: slideDown 300ms ease-out;

@@ -247,6 +247,9 @@ func buildRankingModelMeta() map[string]rankingModelMeta {
 			item.vendorIcon = vendor.Icon
 		} else if pricing.OwnerBy != "" {
 			item.vendor = pricing.OwnerBy
+		} else if vendor, icon := model.GetDefaultVendor(pricing.ModelName); vendor != "" {
+			item.vendor = vendor
+			item.vendorIcon = icon
 		}
 		meta[pricing.ModelName] = item
 	}
@@ -256,6 +259,9 @@ func buildRankingModelMeta() map[string]rankingModelMeta {
 func modelMeta(modelName string, meta map[string]rankingModelMeta) rankingModelMeta {
 	if item, ok := meta[modelName]; ok && item.vendor != "" {
 		return item
+	}
+	if vendor, icon := model.GetDefaultVendor(modelName); vendor != "" {
+		return rankingModelMeta{vendor: vendor, vendorIcon: icon}
 	}
 	return rankingModelMeta{vendor: rankingUnknownVendor}
 }

@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { Check, Moon, Sun } from 'lucide-react'
+import { Check, LaptopMinimal, Moon, Sun } from 'lucide-react'
 import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -30,7 +30,11 @@ import {
 import { useTheme } from '@/context/theme-provider'
 import { cn } from '@/lib/utils'
 
-export function ThemeSwitch() {
+interface ThemeSwitchProps {
+  compact?: boolean
+}
+
+export function ThemeSwitch({ compact = false }: ThemeSwitchProps) {
   const { t } = useTranslation()
   const { theme, setTheme } = useTheme()
 
@@ -45,10 +49,22 @@ export function ThemeSwitch() {
   return (
     <DropdownMenu modal={false}>
       <DropdownMenuTrigger
-        render={<Button variant='ghost' size='icon' className='h-9 w-9' />}
+        render={
+          <Button
+            variant='ghost'
+            size='icon'
+            className={compact ? 'size-8' : 'h-9 w-9'}
+          />
+        }
       >
-        <Sun className='size-[1.2rem] scale-100 rotate-0 transition-all dark:scale-0 dark:-rotate-90' />
-        <Moon className='absolute size-[1.2rem] scale-0 rotate-90 transition-all dark:scale-100 dark:rotate-0' />
+        {compact ? (
+          <LaptopMinimal className='size-4' />
+        ) : (
+          <>
+            <Sun className='size-[1.2rem] scale-100 rotate-0 transition-all dark:scale-0 dark:-rotate-90' />
+            <Moon className='absolute size-[1.2rem] scale-0 rotate-90 transition-all dark:scale-100 dark:rotate-0' />
+          </>
+        )}
         <span className='sr-only'>{t('Toggle theme')}</span>
       </DropdownMenuTrigger>
       <DropdownMenuContent align='end'>

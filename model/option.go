@@ -1,6 +1,7 @@
 package model
 
 import (
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -189,6 +190,10 @@ func InitOptionMap() {
 
 func loadOptionsFromDatabase() {
 	options, _ := AllOption()
+	// 先加载旧版扁平配置，再加载分层配置，避免兼容字段覆盖明确的分层设置。
+	sort.SliceStable(options, func(i, j int) bool {
+		return !strings.Contains(options[i].Key, ".") && strings.Contains(options[j].Key, ".")
+	})
 	for _, option := range options {
 		err := updateOptionMap(option.Key, option.Value)
 		if err != nil {

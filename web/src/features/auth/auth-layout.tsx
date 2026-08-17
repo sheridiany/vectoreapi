@@ -43,14 +43,14 @@ export function AuthLayout({ children }: AuthLayoutProps) {
             <img
               src={logo}
               alt={t('Logo')}
-              className='h-8 w-8 rounded-full object-cover'
+              className='h-8 w-8 rounded-full object-contain'
             />
           )}
         </div>
         {loading ? (
           <Skeleton className='h-6 w-24' />
         ) : (
-          <h1 className='text-xl font-medium'>{systemName}</h1>
+          <h1 className='font-sans text-xl font-medium'>{systemName}</h1>
         )}
       </Link>
       <div className='container flex items-center pt-16 sm:pt-0'>

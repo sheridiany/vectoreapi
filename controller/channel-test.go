@@ -41,10 +41,13 @@ type testResult struct {
 	newAPIError *types.NewAPIError
 }
 
-func normalizeChannelTestEndpoint(channel *model.Channel, endpointType string) string {
+func normalizeChannelTestEndpoint(channel *model.Channel, testModel, endpointType string) string {
 	normalized := strings.TrimSpace(endpointType)
 	if normalized != "" {
 		return normalized
+	}
+	if common.IsImageGenerationModel(testModel) {
+		return string(constant.EndpointTypeImageGeneration)
 	}
 	if channel != nil && channel.Type == constant.ChannelTypeCodex {
 		return string(constant.EndpointTypeOpenAIResponse)
@@ -107,7 +110,7 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 		}
 	}
 
-	endpointType = normalizeChannelTestEndpoint(channel, endpointType)
+	endpointType = normalizeChannelTestEndpoint(channel, testModel, endpointType)
 
 	requestPath := "/v1/chat/completions"
 

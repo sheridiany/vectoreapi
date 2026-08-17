@@ -4,38 +4,41 @@ import (
 	"strings"
 )
 
-// 简化的供应商映射规则
-var defaultVendorRules = map[string]string{
-	"gpt":      "OpenAI",
-	"dall-e":   "OpenAI",
-	"whisper":  "OpenAI",
-	"o1":       "OpenAI",
-	"o3":       "OpenAI",
-	"claude":   "Anthropic",
-	"gemini":   "Google",
-	"moonshot": "Moonshot",
-	"kimi":     "Moonshot",
-	"chatglm":  "智谱",
-	"glm-":     "智谱",
-	"qwen":     "阿里巴巴",
-	"deepseek": "DeepSeek",
-	"abab":     "MiniMax",
-	"minimax":  "MiniMax",
-	"ernie":    "百度",
-	"spark":    "讯飞",
-	"hunyuan":  "腾讯",
-	"command":  "Cohere",
-	"@cf/":     "Cloudflare",
-	"360":      "360",
-	"yi":       "零一万物",
-	"jina":     "Jina",
-	"mistral":  "Mistral",
-	"grok":     "xAI",
-	"llama":    "Meta",
-	"doubao":   "字节跳动",
-	"kling":    "快手",
-	"jimeng":   "即梦",
-	"vidu":     "Vidu",
+// 简化的供应商映射规则，按优先级匹配，避免模型同时命中多个厂商时结果不稳定。
+var defaultVendorRules = []struct {
+	pattern string
+	vendor  string
+}{
+	{"gpt", "OpenAI"},
+	{"dall-e", "OpenAI"},
+	{"whisper", "OpenAI"},
+	{"o1", "OpenAI"},
+	{"o3", "OpenAI"},
+	{"claude", "Anthropic"},
+	{"gemini", "Google"},
+	{"moonshot", "Moonshot"},
+	{"kimi", "Moonshot"},
+	{"chatglm", "智谱"},
+	{"glm-", "智谱"},
+	{"qwen", "阿里巴巴"},
+	{"deepseek", "DeepSeek"},
+	{"abab", "MiniMax"},
+	{"minimax", "MiniMax"},
+	{"ernie", "百度"},
+	{"spark", "讯飞"},
+	{"hunyuan", "腾讯"},
+	{"command", "Cohere"},
+	{"@cf/", "Cloudflare"},
+	{"360", "360"},
+	{"yi", "零一万物"},
+	{"jina", "Jina"},
+	{"mistral", "Mistral"},
+	{"grok", "xAI"},
+	{"llama", "Meta"},
+	{"doubao", "字节跳动"},
+	{"kling", "快手"},
+	{"jimeng", "即梦"},
+	{"vidu", "Vidu"},
 }
 
 // 供应商默认图标映射
@@ -72,19 +75,14 @@ var defaultVendorIcons = map[string]string{
 func initDefaultVendorMapping(metaMap map[string]*Model, vendorMap map[int]*Vendor, enableAbilities []AbilityWithChannel) {
 	for _, ability := range enableAbilities {
 		modelName := ability.Model
-		if _, exists := metaMap[modelName]; exists {
+		if meta, exists := metaMap[modelName]; exists {
+			if meta.VendorID == 0 {
+				meta.VendorID = ensureDefaultVendor(modelName, vendorMap)
+			}
 			continue
 		}
 
-		// 匹配供应商
-		vendorID := 0
-		modelLower := strings.ToLower(modelName)
-		for pattern, vendorName := range defaultVendorRules {
-			if strings.Contains(modelLower, pattern) {
-				vendorID = getOrCreateVendor(vendorName, vendorMap)
-				break
-			}
-		}
+		vendorID := ensureDefaultVendor(modelName, vendorMap)
 
 		// 创建模型元数据
 		metaMap[modelName] = &Model{
@@ -94,6 +92,25 @@ func initDefaultVendorMapping(metaMap map[string]*Model, vendorMap map[int]*Vend
 			NameRule:  NameRuleExact,
 		}
 	}
+}
+
+// GetDefaultVendor returns the deterministic fallback vendor metadata for a model name.
+func GetDefaultVendor(modelName string) (string, string) {
+	modelLower := strings.ToLower(modelName)
+	for _, rule := range defaultVendorRules {
+		if strings.Contains(modelLower, rule.pattern) {
+			return rule.vendor, getDefaultVendorIcon(rule.vendor)
+		}
+	}
+	return "", ""
+}
+
+func ensureDefaultVendor(modelName string, vendorMap map[int]*Vendor) int {
+	vendorName, _ := GetDefaultVendor(modelName)
+	if vendorName == "" {
+		return 0
+	}
+	return getOrCreateVendor(vendorName, vendorMap)
 }
 
 // 查找或创建供应商

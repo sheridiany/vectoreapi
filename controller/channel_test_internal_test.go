@@ -56,6 +56,22 @@ func TestValidateChannelProxy(t *testing.T) {
 	}
 }
 
+func TestNormalizeChannelTestEndpointPrefersImageGeneration(t *testing.T) {
+	imageEndpoint := normalizeChannelTestEndpoint(
+		&model.Channel{Type: constant.ChannelTypeCodex},
+		"gpt-image-2",
+		"",
+	)
+	assert.Equal(t, string(constant.EndpointTypeImageGeneration), imageEndpoint)
+
+	responseEndpoint := normalizeChannelTestEndpoint(
+		&model.Channel{Type: constant.ChannelTypeCodex},
+		"gpt-5.6",
+		"",
+	)
+	assert.Equal(t, string(constant.EndpointTypeOpenAIResponse), responseEndpoint)
+}
+
 func TestValidateChannelRequiresNewAPIBaseURL(t *testing.T) {
 	tests := []struct {
 		name    string

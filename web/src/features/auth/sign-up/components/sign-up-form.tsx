@@ -38,7 +38,18 @@ import {
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { register, wechatLoginByCode } from '@/features/auth/api'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import {
+  getEnterpriseRegistrationOptions,
+  register,
+  wechatLoginByCode,
+} from '@/features/auth/api'
 import { LegalConsent } from '@/features/auth/components/legal-consent'
 import { OAuthProviders } from '@/features/auth/components/oauth-providers'
 import { registerFormSchema } from '@/features/auth/constants'
@@ -49,6 +60,7 @@ import {
   getAffiliateCode,
   saveAffiliateCode,
 } from '@/features/auth/lib/storage'
+import type { RegistrationEnterpriseOption } from '@/features/auth/types'
 import { useStatus } from '@/hooks/use-status'
 import { isAuthBundle } from '@/lib/api'
 import { getServerErrorMessageKey } from '@/lib/server-error-message'
@@ -66,6 +78,19 @@ export function SignUpForm({
   const [isWeChatDialogOpen, setIsWeChatDialogOpen] = useState(false)
   const [isWeChatSubmitting, setIsWeChatSubmitting] = useState(false)
   const [turnstileWidgetKey, setTurnstileWidgetKey] = useState(0)
+  const [enterpriseOptions, setEnterpriseOptions] = useState<
+    RegistrationEnterpriseOption[]
+  >([])
+  const [enterpriseCodeFromQuery] = useState(
+    () =>
+      new URLSearchParams(window.location.search).get('enterprise_code') ?? ''
+  )
+  const [enterpriseInvitationCodeFromQuery] = useState(
+    () =>
+      new URLSearchParams(window.location.search).get(
+        'enterprise_invitation_code'
+      ) ?? ''
+  )
   const legalConsentErrorMessage = t('Please agree to the legal terms first')
 
   const { status } = useStatus()
@@ -94,8 +119,16 @@ export function SignUpForm({
       email: '',
       password: '',
       confirmPassword: '',
+      enterprise_code: enterpriseCodeFromQuery,
+      enterprise_invitation_code: enterpriseInvitationCodeFromQuery,
     },
   })
+
+  useEffect(() => {
+    getEnterpriseRegistrationOptions()
+      .then(setEnterpriseOptions)
+      .catch(() => setEnterpriseOptions([]))
+  }, [])
 
   const emailValue = form.watch('email')
   const emailVerificationRequired = !!status?.email_verification
@@ -160,12 +193,24 @@ export function SignUpForm({
 
     setIsLoading(true)
     try {
+      const selectedEnterprise = enterpriseOptions.find(
+        (option) => option.code === data.enterprise_code
+      )
+      if (
+        selectedEnterprise?.registration_mode === 'invite' &&
+        !data.enterprise_invitation_code?.trim()
+      ) {
+        toast.error(t('Please enter your enterprise invitation code'))
+        return
+      }
       const res = await register({
         username: data.username,
         password: data.password,
         email: data.email || undefined,
         verification_code: verificationCode || undefined,
         aff_code: getAffiliateCode(),
+        enterprise_code: data.enterprise_code,
+        enterprise_invitation_code: data.enterprise_invitation_code,
         turnstile: turnstileToken,
       })
 
@@ -214,7 +259,11 @@ export function SignUpForm({
 
     setIsWeChatSubmitting(true)
     try {
-      const res = await wechatLoginByCode(wechatCode)
+      const values = form.getValues()
+      const res = await wechatLoginByCode(wechatCode, {
+        enterpriseCode: values.enterprise_code,
+        enterpriseInvitationCode: values.enterprise_invitation_code,
+      })
       if (res?.success && isAuthBundle(res.data)) {
         await handleLoginSuccess(res.data)
         toast.success(t('Signed in via WeChat'))
@@ -240,6 +289,22 @@ export function SignUpForm({
     verificationCodeAction = <Loader2 className='h-4 w-4 animate-spin' />
   }
 
+  const enterpriseContext = {
+    enterpriseCode: form.watch('enterprise_code'),
+    enterpriseInvitationCode:
+      form.watch('enterprise_invitation_code') || undefined,
+  }
+  const selectedEnterprise = enterpriseOptions.find(
+    (option) => option.code === enterpriseContext.enterpriseCode
+  )
+  const showInvitationField =
+    selectedEnterprise?.registration_mode === 'invite' ||
+    Boolean(enterpriseInvitationCodeFromQuery)
+  const enterpriseRegistrationReady =
+    selectedEnterprise != null &&
+    (selectedEnterprise.registration_mode !== 'invite' ||
+      Boolean(enterpriseContext.enterpriseInvitationCode?.trim()))
+
   return (
     <Form {...form}>
       <form
@@ -247,6 +312,68 @@ export function SignUpForm({
         className={cn('grid gap-4', className)}
         {...props}
       >
+        <FormField
+          control={form.control}
+          name='enterprise_code'
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>{t('Enterprise')}</FormLabel>
+              <Select
+                items={enterpriseOptions.map((option) => ({
+                  value: option.code,
+                  label: option.name,
+                }))}
+                value={field.value}
+                onValueChange={(value) => {
+                  field.onChange(value)
+                  const option = enterpriseOptions.find(
+                    (item) => item.code === value
+                  )
+                  if (option?.registration_mode !== 'invite') {
+                    form.setValue('enterprise_invitation_code', '')
+                  }
+                }}
+              >
+                <FormControl>
+                  <SelectTrigger
+                    aria-label={t('Enterprise')}
+                    className='w-full'
+                  >
+                    <SelectValue placeholder={t('Select your enterprise')} />
+                  </SelectTrigger>
+                </FormControl>
+                <SelectContent alignItemWithTrigger={false}>
+                  {enterpriseOptions.map((option) => (
+                    <SelectItem key={option.id} value={option.code}>
+                      <span translate='no'>{option.name}</span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
+        {showInvitationField && (
+          <FormField
+            control={form.control}
+            name='enterprise_invitation_code'
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>{t('Enterprise invitation code')}</FormLabel>
+                <FormControl>
+                  <Input
+                    placeholder={t('Enter your enterprise invitation code')}
+                    {...field}
+                  />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        )}
+
         {/* Username Field */}
         <FormField
           control={form.control}
@@ -381,9 +508,14 @@ export function SignUpForm({
         {oauthRegisterEnabled && (
           <OAuthProviders
             status={status}
-            disabled={isLoading || (requiresLegalConsent && !agreedToLegal)}
+            disabled={
+              isLoading ||
+              (requiresLegalConsent && !agreedToLegal) ||
+              !enterpriseRegistrationReady
+            }
             onWeChatLogin={hasWeChatLogin ? handleOpenWeChatDialog : undefined}
             isWeChatLoading={isWeChatSubmitting}
+            enterpriseContext={enterpriseContext}
             className='pt-2'
           />
         )}

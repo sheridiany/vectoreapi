@@ -19,15 +19,21 @@ For commercial licensing, please contact support@quantumnous.com
 import { useCallback, useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { PublicLayout } from '@/components/layout'
-import { Footer } from '@/components/layout/components/footer'
+import { PublicLayout, type TopNavLink } from '@/components/layout'
 import { RichContent } from '@/components/rich-content'
 import { useTheme } from '@/context/theme-provider'
 import { isLikelyHtml } from '@/lib/content-format'
 import { useAuthStore } from '@/stores/auth-store'
 
-import { CTA, Features, Hero, HowItWorks, Stats } from './components'
+import { CTA, Hero } from './components'
 import { useHomePageContent } from './hooks'
+
+const HOME_NAV_LINKS: TopNavLink[] = [
+  { title: 'Home nav capabilities', href: '/#capabilities' },
+  { title: 'Home nav providers', href: '/#providers' },
+  { title: 'Home nav FAQ', href: '/#faq' },
+  { title: 'Home nav models', href: '/pricing' },
+]
 
 export function Home() {
   const { i18n, t } = useTranslation()
@@ -121,13 +127,19 @@ export function Home() {
   }
 
   return (
-    <PublicLayout showMainContainer={false}>
-      <Hero isAuthenticated={isAuthenticated} />
-      <Stats />
-      <Features />
-      <HowItWorks />
-      <CTA isAuthenticated={isAuthenticated} />
-      <Footer />
+    <PublicLayout
+      showMainContainer={false}
+      headerProps={{
+        navLinks: HOME_NAV_LINKS,
+        showNotifications: false,
+        useDynamicNavLinks: false,
+        variant: 'editorial',
+      }}
+    >
+      <div className='bg-[#f6f6f5] font-sans text-[#1f1b17] dark:bg-[#11110f] dark:text-[#f5f1e9]'>
+        <Hero isAuthenticated={isAuthenticated} />
+        <CTA isAuthenticated={isAuthenticated} />
+      </div>
     </PublicLayout>
   )
 }
