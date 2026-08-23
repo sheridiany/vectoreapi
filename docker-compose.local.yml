@@ -10,7 +10,7 @@ services:
     volumes:
       - new-api-local_dev_data:/data
     environment:
-      SQL_DSN: postgresql://root:123456@new-api-dev-pg:5432/new-api
+      SQL_DSN: postgresql://root:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@new-api-dev-pg:5432/new-api
       REDIS_CONN_STRING: redis://new-api-dev-redis
       TZ: Asia/Shanghai
       BATCH_UPDATE_ENABLED: "true"
