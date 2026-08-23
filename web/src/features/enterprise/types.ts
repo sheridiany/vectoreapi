@@ -88,6 +88,7 @@ export interface EnterpriseMemberRanking {
   rank: number
   user_id: number
   username: string
+  display_name?: string
   net_quota: number
   total_tokens: number
   request_count: number

@@ -33,6 +33,8 @@ export function MemberRankingTable(props: {
   compact?: boolean
 }) {
   const { t } = useTranslation()
+  const getMemberName = (row: EnterpriseMemberRanking) =>
+    row.display_name || row.username
   const columns: StaticDataTableColumn<EnterpriseMemberRanking>[] = [
     {
       id: 'rank',
@@ -45,7 +47,7 @@ export function MemberRankingTable(props: {
       header: t('Member'),
       cell: (row) => (
         <div className='min-w-0'>
-          <p className='truncate font-medium'>{row.username}</p>
+          <p className='truncate font-medium'>{getMemberName(row)}</p>
           {!props.compact && (
             <p className='text-muted-foreground mt-0.5 font-mono text-xs'>
               ID {row.user_id}

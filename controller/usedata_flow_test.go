@@ -17,6 +17,12 @@ type flowQuotaResponse struct {
 	Data    []model.FlowQuotaData `json:"data"`
 }
 
+type userQuotaResponse struct {
+	Success bool              `json:"success"`
+	Message string            `json:"message"`
+	Data    []model.QuotaData `json:"data"`
+}
+
 func setupFlowControllerTestDB(t *testing.T) {
 	t.Helper()
 	db := setupModelListControllerTestDB(t)
@@ -132,4 +138,53 @@ func TestGetUserFlowQuotaDatesRejectsInvalidTimeRange(t *testing.T) {
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
 	require.False(t, payload.Success)
 	require.Equal(t, "invalid start_timestamp", payload.Message)
+}
+
+func TestGetQuotaDatesByUserFiltersByEnterprise(t *testing.T) {
+	setupFlowControllerTestDB(t)
+	require.NoError(t, model.DB.Create(&model.User{
+		Id: 3, Username: "carol", Password: "password123", DisplayName: "Carol Chen",
+		Role: common.RoleCommonUser, Status: common.UserStatusEnabled, Group: "default",
+	}).Error)
+	require.NoError(t, model.DB.Create(&model.QuotaData{
+		UserID:       3,
+		EnterpriseID: 42,
+		Username:     "carol",
+		ModelName:    "gpt-c",
+		CreatedAt:    1300,
+		Count:        1,
+		Quota:        90,
+		TokenUsed:    30,
+	}).Error)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/data/users?start_timestamp=1000&end_timestamp=2000&enterprise_id=42", nil)
+
+	GetQuotaDatesByUser(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var payload userQuotaResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
+	require.True(t, payload.Success, payload.Message)
+	require.Len(t, payload.Data, 1)
+	require.Equal(t, 42, payload.Data[0].EnterpriseID)
+	require.Equal(t, "carol", payload.Data[0].Username)
+	require.Equal(t, "Carol Chen", payload.Data[0].DisplayName)
+}
+
+func TestGetQuotaDatesByUserRejectsInvalidEnterpriseFilter(t *testing.T) {
+	setupFlowControllerTestDB(t)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/data/users?start_timestamp=1000&end_timestamp=2000&enterprise_id=invalid", nil)
+
+	GetQuotaDatesByUser(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var payload userQuotaResponse
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
+	require.False(t, payload.Success)
+	require.Equal(t, "invalid enterprise_id", payload.Message)
 }

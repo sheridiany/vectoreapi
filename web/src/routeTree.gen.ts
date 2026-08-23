@@ -29,6 +29,9 @@ import { Route as errors503RouteImport } from './routes/(errors)/503'
 import { Route as AuthenticatedChat2linkRouteImport } from './routes/_authenticated/chat2link'
 import { Route as AuthenticatedSystemSettingsRouteRouteImport } from './routes/_authenticated/system-settings/route'
 import { Route as AboutIndexRouteImport } from './routes/about/index'
+import { Route as DocsIndexRouteImport } from './routes/docs/index'
+import { Route as DocsGettingStartedRouteImport } from './routes/docs/getting-started'
+import { Route as DocsTroubleshootingRouteImport } from './routes/docs/troubleshooting'
 import { Route as OauthProviderRouteImport } from './routes/oauth/$provider'
 import { Route as PricingIndexRouteImport } from './routes/pricing/index'
 import { Route as RankingsIndexRouteImport } from './routes/rankings/index'
@@ -60,6 +63,11 @@ import { Route as AuthenticatedUsageLogsIndexRouteImport } from './routes/_authe
 import { Route as AuthenticatedUsageLogsSectionRouteImport } from './routes/_authenticated/usage-logs/$section'
 import { Route as AuthenticatedUsersIndexRouteImport } from './routes/_authenticated/users/index'
 import { Route as AuthenticatedWalletIndexRouteImport } from './routes/_authenticated/wallet/index'
+import { Route as DocsApiIndexRouteImport } from './routes/docs/api/index'
+import { Route as DocsApiChatCompletionsRouteImport } from './routes/docs/api/chat-completions'
+import { Route as DocsGuideIndexRouteImport } from './routes/docs/guide/index'
+import { Route as DocsGuideChatClientsRouteImport } from './routes/docs/guide/chat-clients'
+import { Route as DocsGuideRegistrationRouteImport } from './routes/docs/guide/registration'
 import { Route as PricingModelIdIndexRouteImport } from './routes/pricing/$modelId/index'
 import { Route as AuthenticatedEnterpriseAdminRankingsRouteImport } from './routes/_authenticated/enterprise/admin_.rankings'
 import { Route as AuthenticatedSystemSettingsAuthIndexRouteImport } from './routes/_authenticated/system-settings/auth/index'
@@ -174,6 +182,21 @@ const AuthenticatedSystemSettingsRouteRoute =
 const AboutIndexRoute = AboutIndexRouteImport.update({
   id: '/about/',
   path: '/about/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DocsIndexRoute = DocsIndexRouteImport.update({
+  id: '/docs/',
+  path: '/docs/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DocsGettingStartedRoute = DocsGettingStartedRouteImport.update({
+  id: '/docs/getting-started',
+  path: '/docs/getting-started',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DocsTroubleshootingRoute = DocsTroubleshootingRouteImport.update({
+  id: '/docs/troubleshooting',
+  path: '/docs/troubleshooting',
   getParentRoute: () => rootRouteImport,
 } as any)
 const OauthProviderRoute = OauthProviderRouteImport.update({
@@ -354,6 +377,31 @@ const AuthenticatedWalletIndexRoute =
     path: '/wallet/',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
+const DocsApiIndexRoute = DocsApiIndexRouteImport.update({
+  id: '/docs/api/',
+  path: '/docs/api/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DocsApiChatCompletionsRoute = DocsApiChatCompletionsRouteImport.update({
+  id: '/docs/api/chat-completions',
+  path: '/docs/api/chat-completions',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DocsGuideIndexRoute = DocsGuideIndexRouteImport.update({
+  id: '/docs/guide/',
+  path: '/docs/guide/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DocsGuideChatClientsRoute = DocsGuideChatClientsRouteImport.update({
+  id: '/docs/guide/chat-clients',
+  path: '/docs/guide/chat-clients',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DocsGuideRegistrationRoute = DocsGuideRegistrationRouteImport.update({
+  id: '/docs/guide/registration',
+  path: '/docs/guide/registration',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const PricingModelIdIndexRoute = PricingModelIdIndexRouteImport.update({
   id: '/pricing/$modelId/',
   path: '/pricing/$modelId/',
@@ -468,8 +516,11 @@ export interface FileRoutesByFullPath {
   '/500': typeof errors500Route
   '/503': typeof errors503Route
   '/chat2link': typeof AuthenticatedChat2linkRoute
+  '/docs/getting-started': typeof DocsGettingStartedRoute
+  '/docs/troubleshooting': typeof DocsTroubleshootingRoute
   '/oauth/$provider': typeof OauthProviderRoute
   '/about/': typeof AboutIndexRoute
+  '/docs/': typeof DocsIndexRoute
   '/pricing/': typeof PricingIndexRoute
   '/rankings/': typeof RankingsIndexRoute
   '/setup/': typeof SetupIndexRoute
@@ -486,6 +537,9 @@ export interface FileRoutesByFullPath {
   '/errors/$error': typeof AuthenticatedErrorsErrorRoute
   '/models/$section': typeof AuthenticatedModelsSectionRoute
   '/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
+  '/docs/api/chat-completions': typeof DocsApiChatCompletionsRoute
+  '/docs/guide/chat-clients': typeof DocsGuideChatClientsRoute
+  '/docs/guide/registration': typeof DocsGuideRegistrationRoute
   '/channels/': typeof AuthenticatedChannelsIndexRoute
   '/dashboard/': typeof AuthenticatedDashboardIndexRoute
   '/enterprise/': typeof AuthenticatedEnterpriseIndexRoute
@@ -500,6 +554,8 @@ export interface FileRoutesByFullPath {
   '/usage-logs/': typeof AuthenticatedUsageLogsIndexRoute
   '/users/': typeof AuthenticatedUsersIndexRoute
   '/wallet/': typeof AuthenticatedWalletIndexRoute
+  '/docs/api/': typeof DocsApiIndexRoute
+  '/docs/guide/': typeof DocsGuideIndexRoute
   '/pricing/$modelId/': typeof PricingModelIdIndexRoute
   '/enterprise/admin/rankings': typeof AuthenticatedEnterpriseAdminRankingsRoute
   '/system-settings/auth/$section': typeof AuthenticatedSystemSettingsAuthSectionRoute
@@ -534,8 +590,11 @@ export interface FileRoutesByTo {
   '/500': typeof errors500Route
   '/503': typeof errors503Route
   '/chat2link': typeof AuthenticatedChat2linkRoute
+  '/docs/getting-started': typeof DocsGettingStartedRoute
+  '/docs/troubleshooting': typeof DocsTroubleshootingRoute
   '/oauth/$provider': typeof OauthProviderRoute
   '/about': typeof AboutIndexRoute
+  '/docs': typeof DocsIndexRoute
   '/pricing': typeof PricingIndexRoute
   '/rankings': typeof RankingsIndexRoute
   '/setup': typeof SetupIndexRoute
@@ -552,6 +611,9 @@ export interface FileRoutesByTo {
   '/errors/$error': typeof AuthenticatedErrorsErrorRoute
   '/models/$section': typeof AuthenticatedModelsSectionRoute
   '/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
+  '/docs/api/chat-completions': typeof DocsApiChatCompletionsRoute
+  '/docs/guide/chat-clients': typeof DocsGuideChatClientsRoute
+  '/docs/guide/registration': typeof DocsGuideRegistrationRoute
   '/channels': typeof AuthenticatedChannelsIndexRoute
   '/dashboard': typeof AuthenticatedDashboardIndexRoute
   '/enterprise': typeof AuthenticatedEnterpriseIndexRoute
@@ -566,6 +628,8 @@ export interface FileRoutesByTo {
   '/usage-logs': typeof AuthenticatedUsageLogsIndexRoute
   '/users': typeof AuthenticatedUsersIndexRoute
   '/wallet': typeof AuthenticatedWalletIndexRoute
+  '/docs/api': typeof DocsApiIndexRoute
+  '/docs/guide': typeof DocsGuideIndexRoute
   '/pricing/$modelId': typeof PricingModelIdIndexRoute
   '/enterprise/admin/rankings': typeof AuthenticatedEnterpriseAdminRankingsRoute
   '/system-settings/auth/$section': typeof AuthenticatedSystemSettingsAuthSectionRoute
@@ -604,8 +668,11 @@ export interface FileRoutesById {
   '/(errors)/500': typeof errors500Route
   '/(errors)/503': typeof errors503Route
   '/_authenticated/chat2link': typeof AuthenticatedChat2linkRoute
+  '/docs/getting-started': typeof DocsGettingStartedRoute
+  '/docs/troubleshooting': typeof DocsTroubleshootingRoute
   '/oauth/$provider': typeof OauthProviderRoute
   '/about/': typeof AboutIndexRoute
+  '/docs/': typeof DocsIndexRoute
   '/pricing/': typeof PricingIndexRoute
   '/rankings/': typeof RankingsIndexRoute
   '/setup/': typeof SetupIndexRoute
@@ -622,6 +689,9 @@ export interface FileRoutesById {
   '/_authenticated/errors/$error': typeof AuthenticatedErrorsErrorRoute
   '/_authenticated/models/$section': typeof AuthenticatedModelsSectionRoute
   '/_authenticated/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
+  '/docs/api/chat-completions': typeof DocsApiChatCompletionsRoute
+  '/docs/guide/chat-clients': typeof DocsGuideChatClientsRoute
+  '/docs/guide/registration': typeof DocsGuideRegistrationRoute
   '/_authenticated/channels/': typeof AuthenticatedChannelsIndexRoute
   '/_authenticated/dashboard/': typeof AuthenticatedDashboardIndexRoute
   '/_authenticated/enterprise/': typeof AuthenticatedEnterpriseIndexRoute
@@ -636,6 +706,8 @@ export interface FileRoutesById {
   '/_authenticated/usage-logs/': typeof AuthenticatedUsageLogsIndexRoute
   '/_authenticated/users/': typeof AuthenticatedUsersIndexRoute
   '/_authenticated/wallet/': typeof AuthenticatedWalletIndexRoute
+  '/docs/api/': typeof DocsApiIndexRoute
+  '/docs/guide/': typeof DocsGuideIndexRoute
   '/pricing/$modelId/': typeof PricingModelIdIndexRoute
   '/_authenticated/enterprise/admin_/rankings': typeof AuthenticatedEnterpriseAdminRankingsRoute
   '/_authenticated/system-settings/auth/$section': typeof AuthenticatedSystemSettingsAuthSectionRoute
@@ -673,8 +745,11 @@ export interface FileRouteTypes {
     | '/500'
     | '/503'
     | '/chat2link'
+    | '/docs/getting-started'
+    | '/docs/troubleshooting'
     | '/oauth/$provider'
     | '/about/'
+    | '/docs/'
     | '/pricing/'
     | '/rankings/'
     | '/setup/'
@@ -691,6 +766,9 @@ export interface FileRouteTypes {
     | '/errors/$error'
     | '/models/$section'
     | '/usage-logs/$section'
+    | '/docs/api/chat-completions'
+    | '/docs/guide/chat-clients'
+    | '/docs/guide/registration'
     | '/channels/'
     | '/dashboard/'
     | '/enterprise/'
@@ -705,6 +783,8 @@ export interface FileRouteTypes {
     | '/usage-logs/'
     | '/users/'
     | '/wallet/'
+    | '/docs/api/'
+    | '/docs/guide/'
     | '/pricing/$modelId/'
     | '/enterprise/admin/rankings'
     | '/system-settings/auth/$section'
@@ -739,8 +819,11 @@ export interface FileRouteTypes {
     | '/500'
     | '/503'
     | '/chat2link'
+    | '/docs/getting-started'
+    | '/docs/troubleshooting'
     | '/oauth/$provider'
     | '/about'
+    | '/docs'
     | '/pricing'
     | '/rankings'
     | '/setup'
@@ -757,6 +840,9 @@ export interface FileRouteTypes {
     | '/errors/$error'
     | '/models/$section'
     | '/usage-logs/$section'
+    | '/docs/api/chat-completions'
+    | '/docs/guide/chat-clients'
+    | '/docs/guide/registration'
     | '/channels'
     | '/dashboard'
     | '/enterprise'
@@ -771,6 +857,8 @@ export interface FileRouteTypes {
     | '/usage-logs'
     | '/users'
     | '/wallet'
+    | '/docs/api'
+    | '/docs/guide'
     | '/pricing/$modelId'
     | '/enterprise/admin/rankings'
     | '/system-settings/auth/$section'
@@ -808,8 +896,11 @@ export interface FileRouteTypes {
     | '/(errors)/500'
     | '/(errors)/503'
     | '/_authenticated/chat2link'
+    | '/docs/getting-started'
+    | '/docs/troubleshooting'
     | '/oauth/$provider'
     | '/about/'
+    | '/docs/'
     | '/pricing/'
     | '/rankings/'
     | '/setup/'
@@ -826,6 +917,9 @@ export interface FileRouteTypes {
     | '/_authenticated/errors/$error'
     | '/_authenticated/models/$section'
     | '/_authenticated/usage-logs/$section'
+    | '/docs/api/chat-completions'
+    | '/docs/guide/chat-clients'
+    | '/docs/guide/registration'
     | '/_authenticated/channels/'
     | '/_authenticated/dashboard/'
     | '/_authenticated/enterprise/'
@@ -840,6 +934,8 @@ export interface FileRouteTypes {
     | '/_authenticated/usage-logs/'
     | '/_authenticated/users/'
     | '/_authenticated/wallet/'
+    | '/docs/api/'
+    | '/docs/guide/'
     | '/pricing/$modelId/'
     | '/_authenticated/enterprise/admin_/rankings'
     | '/_authenticated/system-settings/auth/$section'
@@ -869,11 +965,19 @@ export interface RootRouteChildren {
   errors404Route: typeof errors404Route
   errors500Route: typeof errors500Route
   errors503Route: typeof errors503Route
+  DocsGettingStartedRoute: typeof DocsGettingStartedRoute
+  DocsTroubleshootingRoute: typeof DocsTroubleshootingRoute
   OauthProviderRoute: typeof OauthProviderRoute
   AboutIndexRoute: typeof AboutIndexRoute
+  DocsIndexRoute: typeof DocsIndexRoute
   PricingIndexRoute: typeof PricingIndexRoute
   RankingsIndexRoute: typeof RankingsIndexRoute
   SetupIndexRoute: typeof SetupIndexRoute
+  DocsApiChatCompletionsRoute: typeof DocsApiChatCompletionsRoute
+  DocsGuideChatClientsRoute: typeof DocsGuideChatClientsRoute
+  DocsGuideRegistrationRoute: typeof DocsGuideRegistrationRoute
+  DocsApiIndexRoute: typeof DocsApiIndexRoute
+  DocsGuideIndexRoute: typeof DocsGuideIndexRoute
   PricingModelIdIndexRoute: typeof PricingModelIdIndexRoute
 }
 
@@ -1017,6 +1121,27 @@ declare module '@tanstack/react-router' {
       path: '/about'
       fullPath: '/about/'
       preLoaderRoute: typeof AboutIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/docs/': {
+      id: '/docs/'
+      path: '/docs'
+      fullPath: '/docs/'
+      preLoaderRoute: typeof DocsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/docs/getting-started': {
+      id: '/docs/getting-started'
+      path: '/docs/getting-started'
+      fullPath: '/docs/getting-started'
+      preLoaderRoute: typeof DocsGettingStartedRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/docs/troubleshooting': {
+      id: '/docs/troubleshooting'
+      path: '/docs/troubleshooting'
+      fullPath: '/docs/troubleshooting'
+      preLoaderRoute: typeof DocsTroubleshootingRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/oauth/$provider': {
@@ -1235,6 +1360,41 @@ declare module '@tanstack/react-router' {
       fullPath: '/wallet/'
       preLoaderRoute: typeof AuthenticatedWalletIndexRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/docs/api/': {
+      id: '/docs/api/'
+      path: '/docs/api'
+      fullPath: '/docs/api/'
+      preLoaderRoute: typeof DocsApiIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/docs/api/chat-completions': {
+      id: '/docs/api/chat-completions'
+      path: '/docs/api/chat-completions'
+      fullPath: '/docs/api/chat-completions'
+      preLoaderRoute: typeof DocsApiChatCompletionsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/docs/guide/': {
+      id: '/docs/guide/'
+      path: '/docs/guide'
+      fullPath: '/docs/guide/'
+      preLoaderRoute: typeof DocsGuideIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/docs/guide/chat-clients': {
+      id: '/docs/guide/chat-clients'
+      path: '/docs/guide/chat-clients'
+      fullPath: '/docs/guide/chat-clients'
+      preLoaderRoute: typeof DocsGuideChatClientsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/docs/guide/registration': {
+      id: '/docs/guide/registration'
+      path: '/docs/guide/registration'
+      fullPath: '/docs/guide/registration'
+      preLoaderRoute: typeof DocsGuideRegistrationRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/pricing/$modelId/': {
       id: '/pricing/$modelId/'
@@ -1514,11 +1674,19 @@ const rootRouteChildren: RootRouteChildren = {
   errors404Route: errors404Route,
   errors500Route: errors500Route,
   errors503Route: errors503Route,
+  DocsGettingStartedRoute: DocsGettingStartedRoute,
+  DocsTroubleshootingRoute: DocsTroubleshootingRoute,
   OauthProviderRoute: OauthProviderRoute,
   AboutIndexRoute: AboutIndexRoute,
+  DocsIndexRoute: DocsIndexRoute,
   PricingIndexRoute: PricingIndexRoute,
   RankingsIndexRoute: RankingsIndexRoute,
   SetupIndexRoute: SetupIndexRoute,
+  DocsApiChatCompletionsRoute: DocsApiChatCompletionsRoute,
+  DocsGuideChatClientsRoute: DocsGuideChatClientsRoute,
+  DocsGuideRegistrationRoute: DocsGuideRegistrationRoute,
+  DocsApiIndexRoute: DocsApiIndexRoute,
+  DocsGuideIndexRoute: DocsGuideIndexRoute,
   PricingModelIdIndexRoute: PricingModelIdIndexRoute,
 }
 export const routeTree = rootRouteImport

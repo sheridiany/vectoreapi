@@ -24,6 +24,7 @@ type EnterpriseMemberRanking struct {
 	Rank         int     `json:"rank"`
 	UserID       int     `json:"user_id"`
 	Username     string  `json:"username"`
+	DisplayName  string  `json:"display_name"`
 	NetQuota     int64   `json:"net_quota"`
 	TotalTokens  int64   `json:"total_tokens"`
 	RequestCount int64   `json:"request_count"`
@@ -137,11 +138,24 @@ func GetEnterpriseMemberRankings(enterpriseID int, period, start, end string) (*
 	for _, item := range previous {
 		previousByID[item.UserID] = item.NetQuota
 	}
+	userIDs := make([]int, 0, len(current))
+	for _, item := range current {
+		userIDs = append(userIDs, item.UserID)
+	}
+	displayNames, err := model.GetUserDisplayNames(userIDs)
+	if err != nil {
+		return nil, err
+	}
 	rows := make([]EnterpriseMemberRanking, 0, len(current))
 	for _, item := range current {
+		displayName := displayNames[item.UserID]
+		if displayName == "" {
+			displayName = item.Username
+		}
 		rows = append(rows, EnterpriseMemberRanking{
 			UserID:       item.UserID,
 			Username:     item.Username,
+			DisplayName:  displayName,
 			NetQuota:     item.NetQuota,
 			TotalTokens:  item.TotalTokens,
 			RequestCount: item.RequestCount,

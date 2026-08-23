@@ -39,6 +39,10 @@ function getStoredStatusChats(): RawChatConfig {
   }
 }
 
+function normalizeServerAddress(value: string) {
+  return value.trim().replace(/\/+$/, '')
+}
+
 function extractServerAddress(status: SystemStatus | null) {
   const fromStatus =
     (status?.server_address as string | undefined) ??
@@ -46,15 +50,34 @@ function extractServerAddress(status: SystemStatus | null) {
     status?.data?.server_address ??
     (status?.data as Record<string, unknown> | undefined)?.serverAddress
 
+  const browserOrigin =
+    typeof window !== 'undefined' ? window.location.origin : ''
+
   if (fromStatus && typeof fromStatus === 'string') {
-    return fromStatus
+    const configuredAddress = normalizeServerAddress(fromStatus)
+    try {
+      const configured = new URL(configuredAddress)
+      const browser = browserOrigin ? new URL(browserOrigin) : null
+      const configuredIsIp =
+        /^[0-9.]+$/.test(configured.hostname) || configured.hostname === '::1'
+      const browserIsDomain =
+        browser !== null &&
+        browser.hostname !== 'localhost' &&
+        browser.hostname !== '127.0.0.1' &&
+        !/^[0-9.]+$/.test(browser.hostname) &&
+        browser.hostname !== '::1'
+
+      if (configuredIsIp && browserIsDomain) {
+        return normalizeServerAddress(browserOrigin)
+      }
+    } catch {
+      return configuredAddress
+    }
+
+    return configuredAddress
   }
 
-  if (typeof window !== 'undefined') {
-    return window.location.origin
-  }
-
-  return ''
+  return normalizeServerAddress(browserOrigin)
 }
 
 function extractChats(status: SystemStatus | null): RawChatConfig {
@@ -62,6 +85,12 @@ function extractChats(status: SystemStatus | null): RawChatConfig {
     status?.Chats ?? status?.chats ?? status?.data?.Chats ?? status?.data?.chats
 
   return (raw as RawChatConfig) ?? getStoredStatusChats()
+}
+
+export function useServerAddress(): string {
+  const { status } = useStatus()
+
+  return useMemo(() => extractServerAddress(status), [status])
 }
 
 export function useChatPresets(): {

@@ -1,0 +1,28 @@
+services:
+  new-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: new-api-local:source
+    container_name: new-api-local
+    ports: !override
+      - "3001:3000"
+    volumes:
+      - new-api-local_dev_data:/data
+    environment:
+      SQL_DSN: postgresql://root:123456@new-api-dev-pg:5432/new-api
+      REDIS_CONN_STRING: redis://new-api-dev-redis
+      TZ: Asia/Shanghai
+      BATCH_UPDATE_ENABLED: "true"
+      SESSION_COOKIE_SECURE: "false"
+      TASK_PRICE_PATCH: "seedance-2.0,seedance-2.0-fast"
+    networks:
+      - new-api-local_dev-network
+
+volumes:
+  new-api-local_dev_data:
+    name: new-api-local_dev_data
+
+networks:
+  new-api-local_dev-network:
+    external: true
