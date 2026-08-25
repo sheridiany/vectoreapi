@@ -785,8 +785,6 @@
     "Channel models": "Channel models",
     "Channel name is required": "Channel name is required",
     "Channel test completed": "Channel test completed",
-    "Channel test concurrency": "Channel test concurrency",
-    "Channel test concurrency must be between 1 and 32": "Channel test concurrency must be between 1 and 32",
     "Channel test mode": "Channel test mode",
     "Channel type is required": "Channel type is required",
     "Channel updated successfully": "Channel updated successfully",
@@ -2474,7 +2472,6 @@
     "Internal Notes": "Internal Notes",
     "Internal notes (not shown to users)": "Internal notes (not shown to users)",
     "Internal Server Error!": "Internal Server Error!",
-    "Interval must be at least 1 minute": "Interval must be at least 1 minute",
     "Invalid (NaN)": "Invalid (NaN)",
     "Invalid chat link. Please contact the administrator.": "Invalid chat link. Please contact the administrator.",
     "Invalid chat link. Please contact your administrator.": "Invalid chat link. Please contact your administrator.",
@@ -2492,7 +2489,6 @@
     "Invalid reset link, please request a new password reset.": "Invalid reset link, please request a new password reset.",
     "Invalid rules JSON format": "Invalid rules JSON format",
     "Invalid status code mapping entries: {{entries}}": "Invalid status code mapping entries: {{entries}}",
-    "Invalid status code rules: {{tokens}}": "Invalid status code rules: {{tokens}}",
     "Invalidate": "Invalidate",
     "Invalidated": "Invalidated",
     "Invert match": "Invert match",
@@ -2765,7 +2761,6 @@
     "Maximum check-in quota": "Maximum check-in quota",
     "Maximum custom groups per token": "Maximum custom groups per token",
     "Maximum input window": "Maximum input window",
-    "Maximum number of channels tested at the same time (1-32)": "Maximum number of channels tested at the same time (1-32)",
     "Maximum number of tokens each user can create. Default 1000. Setting too large may affect performance.": "Maximum number of tokens each user can create. Default 1000. Setting too large may affect performance.",
     "Maximum number of tokens in the response": "Maximum number of tokens in the response",
     "Maximum quota amount awarded for check-in": "Maximum quota amount awarded for check-in",
@@ -5510,66 +5505,41 @@
     "{{protocol}} auth value": "{{protocol}} auth value",
     "{{protocol}} authentication": "{{protocol}} authentication",
     "Add management route": "Add management route",
-    "Add routes individually or replace them from a template": {
-      "": "Add routes individually or replace them from a template."
-    },
+    "Add routes individually or replace them from a template.": "Add routes individually or replace them from a template.",
     "Add template": "Add template",
     "All routes": "All routes",
     "Apply plan": "Apply plan",
     "Balance Query": "Balance Query",
     "Balance response not recognized": "Balance response not recognized",
-    "Choose a complete upstream protocol plan or edit individual route groups": {
-      "": "Choose a complete upstream protocol plan or edit individual route groups."
-    },
+    "Channel test concurrency": "Channel test concurrency",
+    "Channel test concurrency must be between 1 and 32": "Channel test concurrency must be between 1 and 32",
+    "Choose a complete upstream protocol plan or edit individual route groups.": "Choose a complete upstream protocol plan or edit individual route groups.",
     "Claude only": "Claude only",
     "Collapse all": "Collapse all",
     "Configured": "Configured",
     "Forwarding Routes": "Forwarding Routes",
     "Full JSON": "Full JSON",
     "Gemini only": "Gemini only",
+    "Interval must be at least 1 minute": "Interval must be at least 1 minute",
+    "Invalid status code rules: {{tokens}}": "Invalid status code rules: {{tokens}}",
+    "Maximum number of channels tested at the same time (1-32)": "Maximum number of channels tested at the same time (1-32)",
     "Model List": "Model List",
-    "Native Claude Messages plus OpenAI Chat compatibility forwarding": {
-      "": "Native Claude Messages plus OpenAI Chat compatibility forwarding."
-    },
-    "Native Gemini routes plus OpenAI Chat and Responses compatibility forwarding": {
-      "": "Native Gemini routes plus OpenAI Chat and Responses compatibility forwarding."
-    },
-    "Native OpenAI routes plus optional Claude and Gemini compatibility routes": {
-      "": "Native OpenAI routes plus optional Claude and Gemini compatibility routes."
-    },
+    "Native Claude Messages plus OpenAI Chat compatibility forwarding.": "Native Claude Messages plus OpenAI Chat compatibility forwarding.",
+    "Native Gemini routes plus OpenAI Chat and Responses compatibility forwarding.": "Native Gemini routes plus OpenAI Chat and Responses compatibility forwarding.",
+    "Native OpenAI routes plus optional Claude and Gemini compatibility routes.": "Native OpenAI routes plus optional Claude and Gemini compatibility routes.",
     "Open Query Balance to view the upstream JSON response": "Open Query Balance to view the upstream JSON response",
     "OpenAI Compatible Upstream": "OpenAI Compatible Upstream",
     "OpenAI only": "OpenAI only",
     "Replace forwarding routes?": "Replace forwarding routes?",
     "Routes in this plan": "Routes in this plan",
-    "Select a complete plan, then keep only the routes you need": {
-      "": "Select a complete plan, then keep only the routes you need."
-    },
+    "Select a complete plan, then keep only the routes you need.": "Select a complete plan, then keep only the routes you need.",
     "Select at least one route": "Select at least one route",
-    "The upstream natively supports all three protocols; every selected route is forwarded without conversion": {
-      "": "The upstream natively supports all three protocols; every selected route is forwarded without conversion."
-    },
-    "The upstream response is valid JSON, but it does not match the OpenAI credit_summary format": {
-      " The channel balance was not updated": {
-        "": "The upstream response is valid JSON, but it does not match the OpenAI credit_summary format. The channel balance was not updated."
-      }
-    },
-    "This route is used only by channel management to discover upstream models": {
-      "": "This route is used only by channel management to discover upstream models."
-    },
-    "This route is used only by channel management to query the upstream balance": {
-      "": "This route is used only by channel management to query the upstream balance."
-    },
-    "This will remove {{removed}} forwarding routes and create {{created}} selected routes": {
-      " Model list and balance routes will be preserved": {
-        "": "This will remove {{removed}} forwarding routes and create {{created}} selected routes. Model list and balance routes will be preserved."
-      }
-    },
-    "This will remove {{removed}} forwarding routes and replace them with the {{template}} template ({{created}} routes)": {
-      " Model list and balance routes will be preserved": {
-        "": "This will remove {{removed}} forwarding routes and replace them with the {{template}} template ({{created}} routes). Model list and balance routes will be preserved."
-      }
-    },
+    "The upstream natively supports all three protocols; every selected route is forwarded without conversion.": "The upstream natively supports all three protocols; every selected route is forwarded without conversion.",
+    "The upstream response is valid JSON, but it does not match the OpenAI credit_summary format. The channel balance was not updated.": "The upstream response is valid JSON, but it does not match the OpenAI credit_summary format. The channel balance was not updated.",
+    "This route is used only by channel management to discover upstream models.": "This route is used only by channel management to discover upstream models.",
+    "This route is used only by channel management to query the upstream balance.": "This route is used only by channel management to query the upstream balance.",
+    "This will remove {{removed}} forwarding routes and create {{created}} selected routes. Model list and balance routes will be preserved.": "This will remove {{removed}} forwarding routes and create {{created}} selected routes. Model list and balance routes will be preserved.",
+    "This will remove {{removed}} forwarding routes and replace them with the {{template}} template ({{created}} routes). Model list and balance routes will be preserved.": "This will remove {{removed}} forwarding routes and replace them with the {{template}} template ({{created}} routes). Model list and balance routes will be preserved.",
     "Upstream JSON response": "Upstream JSON response",
     "Upstream protocol plan": "Upstream protocol plan",
     "Use Bearer for all protocols": "Use Bearer for all protocols"
