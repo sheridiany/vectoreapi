@@ -2,7 +2,6 @@ package perfmetrics
 
 import (
 	"fmt"
-	"strconv"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -34,11 +33,11 @@ func flushCompletedBuckets() {
 		bucket := value.(*atomicBucket)
 		drained := bucket.drain()
 		if drained.requestCount == 0 {
-			deleteOldEmptyBucket(k, key)
+			deleteFlushedBucketIfEmpty(key, bucket)
 			return true
 		}
 
-		err := model.UpsertPerfMetric(&model.PerfMetric{
+		globalMetric := &model.PerfMetric{
 			ModelName:      k.model,
 			Group:          k.group,
 			BucketTs:       k.bucketTs,
@@ -49,21 +48,38 @@ func flushCompletedBuckets() {
 			TtftCount:      drained.ttftCount,
 			OutputTokens:   drained.outputTokens,
 			GenerationMs:   drained.generationMs,
-		})
+		}
+		var enterpriseMetric *model.EnterprisePerfMetric
+		if k.enterpriseID > 0 {
+			enterpriseMetric = &model.EnterprisePerfMetric{
+				EnterpriseID:   k.enterpriseID,
+				ModelName:      k.model,
+				Group:          k.group,
+				BucketTs:       k.bucketTs,
+				RequestCount:   drained.requestCount,
+				SuccessCount:   drained.successCount,
+				TotalLatencyMs: drained.totalLatencyMs,
+				TtftSumMs:      drained.ttftSumMs,
+				TtftCount:      drained.ttftCount,
+				OutputTokens:   drained.outputTokens,
+				GenerationMs:   drained.generationMs,
+			}
+		}
+		err := model.UpsertPerfMetricBuckets(globalMetric, enterpriseMetric)
 		if err != nil {
 			bucket.addCounters(drained)
-			common.SysError(fmt.Sprintf("failed to flush perf metric bucket model=%s group=%s bucket=%d: %s", k.model, k.group, k.bucketTs, err.Error()))
+			common.SysError(fmt.Sprintf("failed to flush perf metric bucket enterprise=%d model=%s group=%s bucket=%d: %s", k.enterpriseID, k.model, k.group, k.bucketTs, err.Error()))
 			return true
 		}
 
-		deleteOldEmptyBucket(k, key)
+		deleteFlushedBucketIfEmpty(key, bucket)
 		return true
 	})
 }
 
-func deleteOldEmptyBucket(k bucketKey, rawKey any) {
-	if k.bucketTs < bucketStart(time.Now().Add(-24*time.Hour).Unix()) {
-		hotBuckets.Delete(rawKey)
+func deleteFlushedBucketIfEmpty(rawKey any, bucket *atomicBucket) {
+	if bucket.closeIfEmpty() {
+		hotBuckets.CompareAndDelete(rawKey, bucket)
 	}
 }
 
@@ -75,24 +91,4 @@ func cleanupExpiredMetrics(retentionDays int) {
 	if err := model.DeletePerfMetricsBefore(cutoff); err != nil {
 		common.SysError("failed to cleanup expired perf metrics: " + err.Error())
 	}
-}
-
-func redisCounters(values map[string]string) counters {
-	return counters{
-		requestCount:   parseRedisInt(values["req"]),
-		successCount:   parseRedisInt(values["ok"]),
-		totalLatencyMs: parseRedisInt(values["lat"]),
-		ttftSumMs:      parseRedisInt(values["ttft"]),
-		ttftCount:      parseRedisInt(values["ttft_n"]),
-		outputTokens:   parseRedisInt(values["out"]),
-		generationMs:   parseRedisInt(values["gen_ms"]),
-	}
-}
-
-func parseRedisInt(value string) int64 {
-	if value == "" {
-		return 0
-	}
-	parsed, _ := strconv.ParseInt(value, 10, 64)
-	return parsed
 }

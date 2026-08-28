@@ -16,18 +16,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { createFileRoute, redirect } from '@tanstack/react-router'
+import { z } from 'zod'
 
-import { dashboardSearchSchema } from '@/features/dashboard/search'
-import { DASHBOARD_DEFAULT_SECTION } from '@/features/dashboard/section-registry'
+const enterpriseIdSearchSchema = z.preprocess((value) => {
+  if (value === undefined) return undefined
+  return typeof value === 'number' ? value : Number(String(value).trim())
+}, z.number().int().positive().optional())
 
-export const Route = createFileRoute('/_authenticated/dashboard/')({
-  beforeLoad: ({ search }) => {
-    throw redirect({
-      to: '/dashboard/$section',
-      params: { section: DASHBOARD_DEFAULT_SECTION },
-      search,
-    })
-  },
-  validateSearch: dashboardSearchSchema,
+export const dashboardSearchSchema = z.object({
+  enterprise_id: enterpriseIdSearchSchema,
 })

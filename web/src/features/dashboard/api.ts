@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import type { PerfSummaryAllData } from '@/features/performance-metrics/types'
 import { api } from '@/lib/api'
 
 import type {
@@ -40,6 +41,7 @@ export async function getUserQuotaDates(
     end_timestamp: number
     default_time?: string
     username?: string
+    enterprise_id?: number
   },
   isAdmin = false
 ) {
@@ -73,6 +75,7 @@ export async function getFlowQuotaDates(
     end_timestamp: number
     default_time?: string
     username?: string
+    enterprise_id?: number
   },
   isAdmin = false
 ) {
@@ -82,6 +85,16 @@ export async function getFlowQuotaDates(
     data?: FlowQuotaDataItem[]
     message?: string
   }>(endpoint, { params })
+  return res.data
+}
+
+export async function getDashboardPerfMetricsSummary(
+  hours = 24,
+  enterpriseId?: number
+): Promise<PerfSummaryAllData> {
+  const res = await api.get<PerfSummaryAllData>('/api/data/performance', {
+    params: { hours, enterprise_id: enterpriseId },
+  })
   return res.data
 }
 

@@ -33,6 +33,8 @@ import type {
   EnterpriseRankingsResponse,
 } from './types'
 
+const ENTERPRISE_PAGE_BATCH_SIZE = 4
+
 interface EnterpriseRankingParams {
   enterpriseId?: number
   period: EnterpriseRankingPeriod
@@ -103,6 +105,46 @@ export async function getEnterprises(): Promise<EnterprisePage<Enterprise>> {
     params: { p: 1, page_size: 100 },
   })
   return res.data
+}
+
+export async function getAllEnterprises(): Promise<EnterprisePage<Enterprise>> {
+  const firstPage = await getEnterprises()
+  if (!firstPage.success || !firstPage.data) return firstPage
+
+  const pageCount = Math.ceil(firstPage.data.total / firstPage.data.page_size)
+  if (pageCount <= 1) return firstPage
+
+  const items = [...firstPage.data.items]
+  for (
+    let batchStart = 2;
+    batchStart <= pageCount;
+    batchStart += ENTERPRISE_PAGE_BATCH_SIZE
+  ) {
+    const batchEnd = Math.min(
+      batchStart + ENTERPRISE_PAGE_BATCH_SIZE - 1,
+      pageCount
+    )
+    const pageResponses = await Promise.all(
+      Array.from({ length: batchEnd - batchStart + 1 }, (_, index) =>
+        api.get<EnterprisePage<Enterprise>>('/api/enterprise/admin/', {
+          params: { p: batchStart + index, page_size: 100 },
+        })
+      )
+    )
+    for (const pageResponse of pageResponses) {
+      const page = pageResponse.data
+      if (!page.success || !page.data) return page
+      items.push(...page.data.items)
+    }
+  }
+
+  return {
+    ...firstPage,
+    data: {
+      ...firstPage.data,
+      items,
+    },
+  }
 }
 
 export async function createEnterprise(data: {

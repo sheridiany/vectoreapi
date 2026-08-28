@@ -210,7 +210,6 @@ export interface UserChartsFilters {
   timeGranularity: TimeGranularity
   selectedRange: number
   topUserLimit: number
-  enterpriseId?: number
 }
 
 // ============================================================================

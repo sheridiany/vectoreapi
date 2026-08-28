@@ -96,6 +96,7 @@ import { FlowNodeFilterControl } from './flow-node-filter'
 
 interface FlowChartsProps {
   filters?: DashboardFilters
+  enterpriseId?: number
   // When false, sensitive node labels are masked in the rendered Sankey.
   sensitiveVisible?: boolean
 }
@@ -325,8 +326,11 @@ export function FlowCharts(props: FlowChartsProps) {
     ]
   )
   const flowQueryParams = useMemo(
-    () => buildQueryParams(timeRange, props.filters),
-    [props.filters, timeRange]
+    () => ({
+      ...buildQueryParams(timeRange, props.filters),
+      enterprise_id: props.enterpriseId,
+    }),
+    [props.enterpriseId, props.filters, timeRange]
   )
 
   const {
@@ -335,7 +339,13 @@ export function FlowCharts(props: FlowChartsProps) {
     isError,
     isLoading,
   } = useQuery({
-    queryKey: ['dashboard', 'flow', flowQueryParams, flowRole],
+    queryKey: [
+      'dashboard',
+      'flow',
+      flowQueryParams,
+      flowRole,
+      props.enterpriseId ?? 'all',
+    ],
     queryFn: () => getFlowQuotaDates(flowQueryParams, isAdmin),
     select: (res) =>
       requireSuccessfulFlowRows(res, t('Please try again later.')),
