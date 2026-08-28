@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -34,6 +35,16 @@ type BillingSession struct {
 	settled          bool // Settle 全部完成（资金 + 令牌）
 	refunded         bool // Refund 已调用
 	mu               sync.Mutex
+}
+
+type billingRefundOperation struct {
+	funding        FundingSource
+	tokenId        int
+	tokenKey       string
+	tokenConsumed  int
+	extraReserved  int
+	subscriptionId int
+	isPlayground   bool
 }
 
 // Settle 根据实际消耗额度进行结算。
@@ -81,46 +92,80 @@ func (s *BillingSession) Settle(actualQuota int) error {
 
 // Refund 退还所有预扣费，幂等安全，异步执行。
 func (s *BillingSession) Refund(c *gin.Context) {
+	operation, ok := s.prepareRefund(c)
+	if !ok {
+		return
+	}
+
+	gopool.Go(func() {
+		if err := operation.apply(); err != nil {
+			common.SysLog("error refunding billing session: " + err.Error())
+		}
+	})
+}
+
+// RefundNow synchronously compensates a pre-consumed request. It is used by
+// non-relay execution paths that must finish compensation before returning a
+// failed request to the caller.
+func (s *BillingSession) RefundNow(ctx context.Context) error {
+	operation, ok := s.prepareRefund(ctx)
+	if !ok {
+		return nil
+	}
+	err := operation.apply()
+	if err != nil && operation.isPlayground && operation.extraReserved == 0 {
+		// Playground billing has one funding refund and no token-side adjustment.
+		// A failed synchronous refund is therefore safe to retry instead of being
+		// permanently marked refunded before compensation actually succeeds.
+		s.mu.Lock()
+		s.refunded = false
+		s.mu.Unlock()
+	}
+	return err
+}
+
+func (s *BillingSession) prepareRefund(ctx context.Context) (*billingRefundOperation, bool) {
 	s.mu.Lock()
 	if s.settled || s.refunded || !s.needsRefundLocked() {
 		s.mu.Unlock()
-		return
+		return nil, false
 	}
 	s.refunded = true
+	operation := &billingRefundOperation{
+		funding:        s.funding,
+		tokenId:        s.relayInfo.TokenId,
+		tokenKey:       s.relayInfo.TokenKey,
+		tokenConsumed:  s.tokenConsumed,
+		extraReserved:  s.extraReserved,
+		subscriptionId: s.relayInfo.SubscriptionId,
+		isPlayground:   s.relayInfo.IsPlayground,
+	}
 	s.mu.Unlock()
 
-	logger.LogInfo(c, fmt.Sprintf("用户 %d 请求失败, 返还预扣费（token_quota=%s, funding=%s）",
+	logger.LogInfo(ctx, fmt.Sprintf("用户 %d 请求失败, 返还预扣费（token_quota=%s, funding=%s）",
 		s.relayInfo.UserId,
 		logger.FormatQuota(s.tokenConsumed),
 		s.funding.Source(),
 	))
+	return operation, true
+}
 
-	// 复制需要的值到闭包中
-	tokenId := s.relayInfo.TokenId
-	tokenKey := s.relayInfo.TokenKey
-	isPlayground := s.relayInfo.IsPlayground
-	tokenConsumed := s.tokenConsumed
-	extraReserved := s.extraReserved
-	subscriptionId := s.relayInfo.SubscriptionId
-	funding := s.funding
-
-	gopool.Go(func() {
-		// 1) 退还资金来源
-		if err := funding.Refund(); err != nil {
-			common.SysLog("error refunding billing source: " + err.Error())
+func (operation *billingRefundOperation) apply() error {
+	var refundErrors []error
+	if err := operation.funding.Refund(); err != nil {
+		refundErrors = append(refundErrors, fmt.Errorf("refund billing source: %w", err))
+	}
+	if operation.extraReserved > 0 && operation.funding.Source() == BillingSourceSubscription && operation.subscriptionId > 0 {
+		if err := model.PostConsumeUserSubscriptionDelta(operation.subscriptionId, -int64(operation.extraReserved)); err != nil {
+			refundErrors = append(refundErrors, fmt.Errorf("refund subscription extra reserve: %w", err))
 		}
-		if extraReserved > 0 && funding.Source() == BillingSourceSubscription && subscriptionId > 0 {
-			if err := model.PostConsumeUserSubscriptionDelta(subscriptionId, -int64(extraReserved)); err != nil {
-				common.SysLog("error refunding subscription extra reserved quota: " + err.Error())
-			}
+	}
+	if operation.tokenConsumed > 0 && !operation.isPlayground {
+		if err := model.IncreaseTokenQuota(operation.tokenId, operation.tokenKey, operation.tokenConsumed); err != nil {
+			refundErrors = append(refundErrors, fmt.Errorf("refund token quota: %w", err))
 		}
-		// 2) 退还令牌额度
-		if tokenConsumed > 0 && !isPlayground {
-			if err := model.IncreaseTokenQuota(tokenId, tokenKey, tokenConsumed); err != nil {
-				common.SysLog("error refunding token quota: " + err.Error())
-			}
-		}
-	})
+	}
+	return errors.Join(refundErrors...)
 }
 
 // NeedsRefund 返回是否存在需要退还的预扣状态。
@@ -381,9 +426,13 @@ func NewBillingSession(c *gin.Context, relayInfo *relaycommon.RelayInfo, preCons
 		}
 		relayInfo.UserQuota = userQuota
 
+		walletRequestId := ""
+		if relayInfo.DurableWalletReservation {
+			walletRequestId = relayInfo.RequestId
+		}
 		session := &BillingSession{
 			relayInfo: relayInfo,
-			funding:   &WalletFunding{userId: relayInfo.UserId},
+			funding:   &WalletFunding{requestId: walletRequestId, userId: relayInfo.UserId},
 		}
 		if apiErr := session.preConsume(c, preConsumedQuota); apiErr != nil {
 			return nil, apiErr

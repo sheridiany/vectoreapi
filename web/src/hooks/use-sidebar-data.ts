@@ -28,6 +28,7 @@ import {
   ListTodo,
   MessageSquare,
   Radio,
+  Search,
   ServerCog,
   Settings,
   Ticket,
@@ -39,6 +40,11 @@ import { useTranslation } from 'react-i18next'
 
 import type { SidebarData } from '@/components/layout/types'
 import { canViewEnterprise } from '@/features/enterprise/lib/permissions'
+import {
+  canManageSearch,
+  canManageSearchAgentKeys,
+  canViewSearchUsage,
+} from '@/features/search/route-guard'
 import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
 
@@ -52,6 +58,9 @@ export function useSidebarData(): SidebarData {
   const { t } = useTranslation()
   const user = useAuthStore((state) => state.auth.user)
   const canViewEnterpriseModule = canViewEnterprise(user)
+  const canManageSearchModule = canManageSearch(user)
+  const canManageSearchAgentKeysModule = canManageSearchAgentKeys(user)
+  const canViewSearchUsageModule = canViewSearchUsage(user)
 
   return {
     navGroups: [
@@ -89,6 +98,21 @@ export function useSidebarData(): SidebarData {
             title: t('API Keys'),
             url: '/keys',
             icon: Key,
+          },
+          {
+            title: t('vSearch keys'),
+            url: '/search/keys',
+            icon: Key,
+          },
+          {
+            title: t('vSearch capabilities'),
+            url: '/search/catalog',
+            icon: Search,
+          },
+          {
+            title: t('vSearch logs'),
+            url: '/search/logs',
+            icon: FileText,
           },
           {
             title: t('Usage Logs'),
@@ -154,6 +178,35 @@ export function useSidebarData(): SidebarData {
                   title: t('Enterprise management'),
                   url: '/enterprise/admin',
                   icon: Building2,
+                  requiredRole: ROLE.SUPER_ADMIN,
+                },
+              ]
+            : []),
+          ...(canManageSearchAgentKeysModule
+            ? [
+                {
+                  title: t('vSearch keys'),
+                  url: '/search/admin/agent-keys',
+                  icon: Key,
+                },
+              ]
+            : []),
+          ...(canManageSearchModule
+            ? [
+                {
+                  title: t('vSearch capabilities'),
+                  url: '/search/admin/catalog',
+                  icon: Settings,
+                  requiredRole: ROLE.SUPER_ADMIN,
+                },
+              ]
+            : []),
+          ...(canViewSearchUsageModule
+            ? [
+                {
+                  title: t('vSearch logs'),
+                  url: '/search/admin/usage-logs',
+                  icon: FileText,
                   requiredRole: ROLE.SUPER_ADMIN,
                 },
               ]

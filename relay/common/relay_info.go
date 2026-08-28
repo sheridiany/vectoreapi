@@ -139,6 +139,9 @@ type RelayInfo struct {
 	SubscriptionPlanTitle string
 	// RequestId is used for idempotent pre-consume/refund
 	RequestId string
+	// DurableWalletReservation persists wallet pre-consume/refund by RequestId.
+	// It is enabled by request flows that also own a durable recovery ledger.
+	DurableWalletReservation bool
 	// SubscriptionAmountTotal / SubscriptionAmountUsedAfterPreConsume are used to compute remaining in logs.
 	SubscriptionAmountTotal               int64
 	SubscriptionAmountUsedAfterPreConsume int64

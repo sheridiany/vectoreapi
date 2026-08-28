@@ -27,6 +27,10 @@ services:
 
   new-api:
     image: vector-epoch-relay-new-api:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+    pull_policy: build
     container_name: vector-epoch-relay-new-api
     restart: unless-stopped
     ports:
@@ -38,8 +42,12 @@ services:
       REDIS_CONN_STRING: redis://new-api-redis:6379
       TZ: Asia/Shanghai
       BATCH_UPDATE_ENABLED: "true"
-      SESSION_COOKIE_SECURE: "false"
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-true}
+      SESSION_COOKIE_TRUSTED_URL: ${SESSION_COOKIE_TRUSTED_URL?set the public HTTPS origin, for example https://relay.example.com; set an explicit empty value only with SESSION_COOKIE_SECURE=false}
+      SESSION_SECRET: ${SESSION_SECRET:?set a persistent SESSION_SECRET}
       TASK_PRICE_PATCH: "seedance-2.0,seedance-2.0-fast"
+      VSEARCH_LOCAL_SECRET_FILE: /data/vsearch-secret.key
+      VSEARCH_PUBLIC_MCP_URL: ${VSEARCH_PUBLIC_MCP_URL:-}
     depends_on:
       new-api-postgres:
         condition: service_healthy

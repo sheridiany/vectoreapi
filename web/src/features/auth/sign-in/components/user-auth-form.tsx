@@ -367,12 +367,9 @@ export function UserAuthForm({
               name='username'
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>{t('Username or Email')}</FormLabel>
+                  <FormLabel>{t('Username')}</FormLabel>
                   <FormControl>
-                    <Input
-                      placeholder={t('Enter your username or email')}
-                      {...field}
-                    />
+                    <Input placeholder={t('Enter your username')} {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>

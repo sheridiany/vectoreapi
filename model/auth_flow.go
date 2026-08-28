@@ -15,17 +15,19 @@ import (
 )
 
 const (
-	AuthFlowPurposeOAuth             = "oauth"
-	AuthFlowPurposeTwoFALogin        = "2fa_login"
-	AuthFlowPurposePasskeyLogin      = "passkey_login"
-	AuthFlowPurposePasskeyRegister   = "passkey_register"
-	AuthFlowPurposePasskeyStepUp     = "passkey_step_up"
-	AuthFlowPurposeTelegramBind      = "telegram_bind"
-	AuthFlowPurposeTelegramAssertion = "telegram_assertion"
-	AuthFlowIntentLogin              = "login"
-	AuthFlowIntentBind               = "bind"
-	AuthFlowTokenBytes               = 32
-	AuthFlowDefaultCleanupRetention  = 24 * time.Hour
+	AuthFlowPurposeOAuth               = "oauth"
+	AuthFlowPurposeTwoFALogin          = "2fa_login"
+	AuthFlowPurposePasskeyLogin        = "passkey_login"
+	AuthFlowPurposePasskeyRegister     = "passkey_register"
+	AuthFlowPurposePasskeyStepUp       = "passkey_step_up"
+	AuthFlowPurposeTelegramBind        = "telegram_bind"
+	AuthFlowPurposeTelegramAssertion   = "telegram_assertion"
+	AuthFlowPurposeSearchAgentInstall  = "search_agent_install"
+	AuthFlowPurposeSearchAgentActivate = "search_agent_activate"
+	AuthFlowIntentLogin                = "login"
+	AuthFlowIntentBind                 = "bind"
+	AuthFlowTokenBytes                 = 32
+	AuthFlowDefaultCleanupRetention    = 24 * time.Hour
 )
 
 var (
@@ -94,6 +96,13 @@ func authFlowTokenHash(token string) string {
 }
 
 func CreateAuthFlow(input AuthFlowCreate) (string, *AuthFlow, error) {
+	return CreateAuthFlowWithTx(DB, input)
+}
+
+func CreateAuthFlowWithTx(tx *gorm.DB, input AuthFlowCreate) (string, *AuthFlow, error) {
+	if tx == nil {
+		return "", nil, ErrAuthFlowInvalid
+	}
 	if strings.TrimSpace(input.Purpose) == "" || input.ExpiresAt.IsZero() || !input.ExpiresAt.After(time.Now()) {
 		return "", nil, ErrAuthFlowInvalid
 	}
@@ -112,7 +121,7 @@ func CreateAuthFlow(input AuthFlowCreate) (string, *AuthFlow, error) {
 		Payload:   input.Payload,
 		ExpiresAt: input.ExpiresAt,
 	}
-	if err := DB.Create(flow).Error; err != nil {
+	if err := tx.Create(flow).Error; err != nil {
 		return "", nil, err
 	}
 	return token, flow, nil
