@@ -135,6 +135,7 @@ if (!rootElement) {
     } catch {
       /* empty */
     }
+    if (window.location.pathname.startsWith('/docs')) return
     // Background refresh
     getStatus()
       .then((s) => {

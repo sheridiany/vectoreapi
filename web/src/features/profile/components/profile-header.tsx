@@ -80,7 +80,7 @@ export function ProfileHeader({ profile, loading }: ProfileHeaderProps) {
   if (!profile) return null
 
   const displayName = getDisplayName(profile)
-  const avatarName = profile.username || displayName
+  const avatarName = displayName || profile.username
   const avatarFallback = getUserAvatarFallback(avatarName)
   const avatarFallbackStyle = getUserAvatarStyle(avatarName)
   const roleLabel = getRoleLabel(profile.role)

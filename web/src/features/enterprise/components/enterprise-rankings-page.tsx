@@ -65,7 +65,7 @@ export function EnterpriseRankingsPage() {
       ],
       ...rows.map((row) => [
         row.rank,
-        row.username,
+        row.display_name || row.username,
         row.net_quota,
         row.total_tokens,
         row.request_count,

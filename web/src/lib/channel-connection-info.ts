@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 export const CHANNEL_CONNECTION_INFO_TYPE = 'newapi_channel_conn'
+export const CHANNEL_CONNECTION_INFO_LABEL = '向量纪元 Relay'
 
 export type ChannelConnectionInfo = {
   key: string
@@ -29,9 +30,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export function encodeChannelConnectionInfo(key: string, url: string): string {
   return JSON.stringify({
+    type: CHANNEL_CONNECTION_INFO_LABEL,
     _type: CHANNEL_CONNECTION_INFO_TYPE,
     key,
-    url,
+    url: url.trim().replace(/\/+$/, ''),
   })
 }
 

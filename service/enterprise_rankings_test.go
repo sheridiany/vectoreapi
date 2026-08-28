@@ -21,7 +21,7 @@ func setupEnterpriseRankingsTest(t *testing.T) *gorm.DB {
 	db, err := gorm.Open(sqlite.Open("file:enterprise_rankings_test?mode=memory&cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
 	model.DB, model.LOG_DB = db, db
-	require.NoError(t, db.AutoMigrate(&model.Enterprise{}, &model.Log{}))
+	require.NoError(t, db.AutoMigrate(&model.Enterprise{}, &model.Log{}, &model.User{}))
 	t.Cleanup(func() {
 		model.DB, model.LOG_DB = previousDB, previousLogDB
 		common.SetDatabaseTypes(previousMainType, previousLogType)
@@ -41,6 +41,10 @@ func TestEnterpriseRankingsUseNetQuotaAndSeparateMemberRanking(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, db.Create(first).Error)
 	require.NoError(t, db.Create(second).Error)
+	require.NoError(t, db.Create(&model.User{
+		Id: 101, Username: "alice", Password: "password123", DisplayName: "Alice Chen",
+		Role: common.RoleCommonUser, Status: common.UserStatusEnabled, Group: "default",
+	}).Error)
 
 	now := time.Now().Unix()
 	start := now - 3600
@@ -74,6 +78,7 @@ func TestEnterpriseRankingsUseNetQuotaAndSeparateMemberRanking(t *testing.T) {
 	assert.Equal(t, int64(80), members.Enterprise.NetQuota)
 	require.Len(t, members.Members, 1)
 	assert.Equal(t, 101, members.Members[0].UserID)
+	assert.Equal(t, "Alice Chen", members.Members[0].DisplayName)
 	assert.Equal(t, int64(80), members.Members[0].NetQuota)
 }
 

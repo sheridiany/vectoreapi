@@ -48,8 +48,21 @@ func GetAllQuotaDates(c *gin.Context) {
 func GetQuotaDatesByUser(c *gin.Context) {
 	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
 	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
-	dates, err := model.GetQuotaDataGroupByUser(startTimestamp, endTimestamp)
+	enterpriseID := 0
+	if rawEnterpriseID := c.Query("enterprise_id"); rawEnterpriseID != "" {
+		parsedEnterpriseID, err := strconv.Atoi(rawEnterpriseID)
+		if err != nil || parsedEnterpriseID <= 0 {
+			common.ApiErrorMsg(c, "invalid enterprise_id")
+			return
+		}
+		enterpriseID = parsedEnterpriseID
+	}
+	dates, err := model.GetQuotaDataGroupByUser(startTimestamp, endTimestamp, enterpriseID)
 	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if err := attachQuotaDisplayNames(dates); err != nil {
 		common.ApiError(c, err)
 		return
 	}
@@ -58,6 +71,27 @@ func GetQuotaDatesByUser(c *gin.Context) {
 		"message": "",
 		"data":    dates,
 	})
+}
+
+func attachQuotaDisplayNames(dates []*model.QuotaData) error {
+	ids := make([]int, 0, len(dates))
+	for _, date := range dates {
+		if date.UserID > 0 {
+			ids = append(ids, date.UserID)
+		}
+	}
+
+	names, err := model.GetUserDisplayNames(ids)
+	if err != nil {
+		return err
+	}
+	for _, date := range dates {
+		date.DisplayName = names[date.UserID]
+		if date.DisplayName == "" {
+			date.DisplayName = date.Username
+		}
+	}
+	return nil
 }
 
 func GetUserQuotaDates(c *gin.Context) {

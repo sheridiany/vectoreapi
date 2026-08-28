@@ -883,6 +883,7 @@ func UpdateSelf(c *gin.Context) {
 		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return
 	}
+	user.DisplayName = strings.TrimSpace(user.DisplayName)
 
 	if user.Password == "" {
 		user.Password = "$I_LOVE_U" // make Validator happy :)

@@ -20,6 +20,8 @@ import i18next from 'i18next'
 import { useState, useEffect, useCallback } from 'react'
 import { toast } from 'sonner'
 
+import { useAuthStore } from '@/stores/auth-store'
+
 import { getUserProfile, updateUserProfile, updateUserSettings } from '../api'
 import type {
   UserProfile,
@@ -46,6 +48,13 @@ export function useProfile() {
 
       if (response.success && response.data) {
         setProfile(response.data)
+        const authUser = useAuthStore.getState().auth.user
+        if (authUser?.id === response.data.id) {
+          useAuthStore.getState().auth.setUser({
+            ...authUser,
+            display_name: response.data.display_name,
+          })
+        }
       }
     } catch (error) {
       // eslint-disable-next-line no-console

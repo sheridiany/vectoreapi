@@ -23,6 +23,7 @@ import {
   Outlet,
   redirect,
   useNavigate,
+  useRouterState,
 } from '@tanstack/react-router'
 import { TanStackRouterDevtools } from '@tanstack/react-router-devtools'
 import { useEffect } from 'react'
@@ -47,9 +48,13 @@ import { useAuthStore } from '@/stores/auth-store'
 function RootComponent() {
   const navigate = useNavigate()
   const queryClient = useQueryClient()
+  const pathname = useRouterState({
+    select: (state) => state.location.pathname,
+  })
+  const isDocumentationPath = pathname.startsWith('/docs')
 
   // Load system configuration (logo, system name, etc.) from backend
-  useSystemConfig({ autoLoad: true })
+  useSystemConfig({ autoLoad: !isDocumentationPath })
 
   useEffect(() => {
     const aff = new URLSearchParams(window.location.search).get('aff')?.trim()
@@ -150,8 +155,11 @@ export const Route = createRootRouteWithContext<{
     }
 
     const pathname = location?.pathname || ''
+    const isDocumentationPath = pathname.startsWith('/docs')
     const needsSetupCheck =
-      !setupStatusChecked && !pathname.startsWith('/setup')
+      !setupStatusChecked &&
+      !pathname.startsWith('/setup') &&
+      !isDocumentationPath
     const authBootstrap = bootstrapAuthentication()
 
     // 只检查 setup 状态（如果需要）

@@ -15,6 +15,7 @@ type QuotaData struct {
 	UserID       int    `json:"user_id" gorm:"index"`
 	EnterpriseID int    `json:"enterprise_id" gorm:"index"`
 	Username     string `json:"username" gorm:"index:idx_qdt_model_user_name,priority:2;size:64;default:''"`
+	DisplayName  string `json:"display_name" gorm:"-"`
 	ModelName    string `json:"model_name" gorm:"index:idx_qdt_model_user_name,priority:1;size:64;default:''"`
 	CreatedAt    int64  `json:"created_at" gorm:"bigint;index:idx_qdt_created_at,priority:2"`
 	UseGroup     string `json:"use_group" gorm:"index;size:64;default:''"`
@@ -164,12 +165,16 @@ func GetQuotaDataByUserId(userId int, startTime int64, endTime int64) (quotaData
 	return quotaDatas, err
 }
 
-func GetQuotaDataGroupByUser(startTime int64, endTime int64) (quotaData []*QuotaData, err error) {
+func GetQuotaDataGroupByUser(startTime int64, endTime int64, enterpriseID int) (quotaData []*QuotaData, err error) {
 	var quotaDatas []*QuotaData
-	err = DB.Table("quota_data").
-		Select("username, created_at, sum(count) as count, sum(quota) as quota, sum(token_used) as token_used").
-		Where("created_at >= ? and created_at <= ?", startTime, endTime).
-		Group("username, created_at").
+	query := DB.Table("quota_data").
+		Select("user_id, enterprise_id, username, created_at, sum(count) as count, sum(quota) as quota, sum(token_used) as token_used").
+		Where("created_at >= ? and created_at <= ?", startTime, endTime)
+	if enterpriseID > 0 {
+		query = query.Where("enterprise_id = ?", enterpriseID)
+	}
+	err = query.
+		Group("user_id, enterprise_id, username, created_at").
 		Find(&quotaDatas).Error
 	return quotaDatas, err
 }
