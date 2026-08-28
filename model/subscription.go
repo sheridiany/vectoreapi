@@ -26,11 +26,12 @@ const (
 
 // Subscription quota reset period
 const (
-	SubscriptionResetNever   = "never"
-	SubscriptionResetDaily   = "daily"
-	SubscriptionResetWeekly  = "weekly"
-	SubscriptionResetMonthly = "monthly"
-	SubscriptionResetCustom  = "custom"
+	SubscriptionResetNever          = "never"
+	SubscriptionResetDaily          = "daily"
+	SubscriptionResetWeekly         = "weekly"
+	SubscriptionResetMonthly        = "monthly"
+	SubscriptionResetCustom         = "custom"
+	subscriptionQuotaInitialVersion = int64(1)
 )
 
 var (
@@ -257,6 +258,10 @@ type UserSubscription struct {
 
 	AmountTotal int64 `json:"amount_total" gorm:"type:bigint;not null;default:0"`
 	AmountUsed  int64 `json:"amount_used" gorm:"type:bigint;not null;default:0"`
+	// QuotaResetVersion identifies the quota period that AmountUsed belongs to.
+	// Refund records capture this value so an old-period refund cannot reduce a
+	// newer period's usage after a scheduled or administrative reset.
+	QuotaResetVersion int64 `json:"-" gorm:"type:bigint;not null;default:0"`
 
 	StartTime int64  `json:"start_time" gorm:"bigint"`
 	EndTime   int64  `json:"end_time" gorm:"bigint;index;index:idx_user_sub_active,priority:3"`
@@ -282,6 +287,9 @@ type UserSubscription struct {
 
 func (s *UserSubscription) BeforeCreate(tx *gorm.DB) error {
 	now := common.GetTimestamp()
+	if s.QuotaResetVersion <= 0 {
+		s.QuotaResetVersion = subscriptionQuotaInitialVersion
+	}
 	s.CreatedAt = now
 	s.UpdatedAt = now
 	return nil
@@ -1014,6 +1022,7 @@ func resetUserSubscriptionTx(tx *gorm.DB, sub *UserSubscription, plan *Subscript
 		return errors.New("invalid reset args")
 	}
 	sub.AmountUsed = 0
+	sub.QuotaResetVersion++
 	if advanceResetTime {
 		nextReset := calcNextResetTime(time.Unix(now, 0), plan, sub.EndTime)
 		sub.NextResetTime = nextReset
@@ -1241,9 +1250,67 @@ type SubscriptionPreConsumeRecord struct {
 	UserId             int    `json:"user_id" gorm:"index"`
 	UserSubscriptionId int    `json:"user_subscription_id" gorm:"index"`
 	PreConsumed        int64  `json:"pre_consumed" gorm:"type:bigint;not null;default:0"`
+	QuotaResetVersion  int64  `json:"-" gorm:"type:bigint;not null;default:0"`
 	Status             string `json:"status" gorm:"type:varchar(32);index"` // consumed/refunded
 	CreatedAt          int64  `json:"created_at" gorm:"bigint"`
 	UpdatedAt          int64  `json:"updated_at" gorm:"bigint;index"`
+}
+
+type subscriptionQuotaVersionMigrationState struct {
+	userSubscriptionTableExisted  bool
+	userSubscriptionColumnExisted bool
+	preConsumeTableExisted        bool
+	preConsumeColumnExisted       bool
+}
+
+func inspectSubscriptionQuotaVersionMigration() subscriptionQuotaVersionMigrationState {
+	migrator := DB.Migrator()
+	state := subscriptionQuotaVersionMigrationState{
+		userSubscriptionTableExisted: migrator.HasTable(&UserSubscription{}),
+		preConsumeTableExisted:       migrator.HasTable(&SubscriptionPreConsumeRecord{}),
+	}
+	if state.userSubscriptionTableExisted {
+		state.userSubscriptionColumnExisted = migrator.HasColumn(&UserSubscription{}, "QuotaResetVersion")
+	}
+	if state.preConsumeTableExisted {
+		state.preConsumeColumnExisted = migrator.HasColumn(&SubscriptionPreConsumeRecord{}, "QuotaResetVersion")
+	}
+	return state
+}
+
+func finalizeSubscriptionQuotaVersionMigration(state subscriptionQuotaVersionMigrationState) error {
+	if state.userSubscriptionTableExisted {
+		var zeroVersionSubscriptions int64
+		if err := DB.Model(&UserSubscription{}).Where("quota_reset_version = ?", 0).Count(&zeroVersionSubscriptions).Error; err != nil {
+			return err
+		}
+		if zeroVersionSubscriptions > 0 {
+			updated := DB.Model(&UserSubscription{}).Where("quota_reset_version = ?", 0).
+				UpdateColumn("quota_reset_version", subscriptionQuotaInitialVersion)
+			if updated.Error != nil {
+				return updated.Error
+			}
+			if state.userSubscriptionColumnExisted {
+				common.SysError(fmt.Sprintf("subscription quota version migration advanced %d intermediate zero-version subscriptions to the fail-safe baseline; matching zero-version refunds will be skipped", updated.RowsAffected))
+			}
+		}
+	}
+
+	var ambiguousConsumedRecords int64
+	currentSubscriptions := DB.Model(&UserSubscription{}).Select("id").Where("quota_reset_version > ?", 0)
+	if err := DB.Model(&SubscriptionPreConsumeRecord{}).
+		Where("status = ? AND quota_reset_version = ? AND user_subscription_id IN (?)", "consumed", 0, currentSubscriptions).
+		Count(&ambiguousConsumedRecords).Error; err != nil {
+		return err
+	}
+	if ambiguousConsumedRecords > 0 {
+		migrationKind := "intermediate"
+		if state.preConsumeTableExisted && !state.preConsumeColumnExisted {
+			migrationKind = "legacy"
+		}
+		common.SysError(fmt.Sprintf("subscription quota version migration left %d %s consumed records at version zero; refunds will not reduce current-period usage", ambiguousConsumedRecords, migrationKind))
+	}
+	return nil
 }
 
 func (r *SubscriptionPreConsumeRecord) BeforeCreate(tx *gorm.DB) error {
@@ -1289,6 +1356,7 @@ func maybeResetUserSubscriptionWithPlanTx(tx *gorm.DB, sub *UserSubscription, pl
 		return nil
 	}
 	sub.AmountUsed = 0
+	sub.QuotaResetVersion++
 	sub.LastResetTime = base.Unix()
 	sub.NextResetTime = next
 	return tx.Save(sub).Error
@@ -1362,6 +1430,7 @@ func PreConsumeUserSubscription(requestId string, userId int, modelName string, 
 				UserId:             userId,
 				UserSubscriptionId: sub.Id,
 				PreConsumed:        amount,
+				QuotaResetVersion:  sub.QuotaResetVersion,
 				Status:             "consumed",
 			}
 			if err := tx.Create(record).Error; err != nil {
@@ -1416,8 +1485,19 @@ func RefundSubscriptionPreConsume(requestId string) error {
 			record.Status = "refunded"
 			return tx.Save(&record).Error
 		}
-		if err := PostConsumeUserSubscriptionDelta(record.UserSubscriptionId, -record.PreConsumed); err != nil {
+		var sub UserSubscription
+		if err := lockForUpdate(tx).Where("id = ?", record.UserSubscriptionId).First(&sub).Error; err != nil {
 			return err
+		}
+		if sub.QuotaResetVersion == record.QuotaResetVersion {
+			newUsed := sub.AmountUsed - record.PreConsumed
+			if newUsed < 0 {
+				newUsed = 0
+			}
+			sub.AmountUsed = newUsed
+			if err := tx.Save(&sub).Error; err != nil {
+				return err
+			}
 		}
 		record.Status = "refunded"
 		return tx.Save(&record).Error
@@ -1473,7 +1553,12 @@ func CleanupSubscriptionPreConsumeRecords(olderThanSeconds int64) (int64, error)
 		olderThanSeconds = 7 * 24 * 3600
 	}
 	cutoff := GetDBTimestamp() - olderThanSeconds
-	res := DB.Where("updated_at < ?", cutoff).Delete(&SubscriptionPreConsumeRecord{})
+	pendingSearchRequests := DB.Model(&SearchUsageEvent{}).
+		Select("request_id").Where("status = ? OR billing_state IN ?", SearchUsageStatusPending, []string{
+		SearchUsageBillingRefundPending, SearchUsageBillingRefundFailed,
+	})
+	res := DB.Where("updated_at < ? AND request_id NOT IN (?)", cutoff, pendingSearchRequests).
+		Delete(&SubscriptionPreConsumeRecord{})
 	return res.RowsAffected, res.Error
 }
 
@@ -1515,20 +1600,27 @@ func PostConsumeUserSubscriptionDelta(userSubscriptionId int, delta int64) error
 		return nil
 	}
 	return DB.Transaction(func(tx *gorm.DB) error {
-		var sub UserSubscription
-		if err := lockForUpdate(tx).
-			Where("id = ?", userSubscriptionId).
-			First(&sub).Error; err != nil {
-			return err
-		}
-		newUsed := sub.AmountUsed + delta
-		if newUsed < 0 {
-			newUsed = 0
-		}
-		if sub.AmountTotal > 0 && newUsed > sub.AmountTotal {
-			return fmt.Errorf("subscription used exceeds total, used=%d total=%d", newUsed, sub.AmountTotal)
-		}
-		sub.AmountUsed = newUsed
-		return tx.Save(&sub).Error
+		return postConsumeUserSubscriptionDeltaTx(tx, userSubscriptionId, delta)
 	})
+}
+
+func postConsumeUserSubscriptionDeltaTx(tx *gorm.DB, userSubscriptionId int, delta int64) error {
+	if tx == nil || userSubscriptionId <= 0 {
+		return errors.New("invalid subscription delta transaction")
+	}
+	var sub UserSubscription
+	if err := lockForUpdate(tx).
+		Where("id = ?", userSubscriptionId).
+		First(&sub).Error; err != nil {
+		return err
+	}
+	newUsed := sub.AmountUsed + delta
+	if newUsed < 0 {
+		newUsed = 0
+	}
+	if sub.AmountTotal > 0 && newUsed > sub.AmountTotal {
+		return fmt.Errorf("subscription used exceeds total, used=%d total=%d", newUsed, sub.AmountTotal)
+	}
+	sub.AmountUsed = newUsed
+	return tx.Save(&sub).Error
 }

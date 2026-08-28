@@ -258,9 +258,18 @@ func migrateDB() error {
 		return err
 	}
 
+	subscriptionQuotaVersionState := inspectSubscriptionQuotaVersionMigration()
 	err := DB.AutoMigrate(
 		&Channel{},
 		&Token{},
+		&SearchAgentKey{},
+		&SearchUpstreamPool{},
+		&SearchUpstreamAccount{},
+		&SearchCapability{},
+		&SearchCapabilityBinding{},
+		&SearchCapabilityGrant{},
+		&SearchUsageEvent{},
+		&SearchExecutionIdempotency{},
 		&User{},
 		&Enterprise{},
 		&EnterpriseMembership{},
@@ -289,6 +298,7 @@ func migrateDB() error {
 		&SubscriptionOrder{},
 		&UserSubscription{},
 		&SubscriptionPreConsumeRecord{},
+		&WalletPreConsumeRecord{},
 		&CustomOAuthProvider{},
 		&UserOAuthBinding{},
 		&PerfMetric{},
@@ -299,6 +309,12 @@ func migrateDB() error {
 		&AuthzRole{},
 	)
 	if err != nil {
+		return err
+	}
+	if err := finalizeSubscriptionQuotaVersionMigration(subscriptionQuotaVersionState); err != nil {
+		return err
+	}
+	if err := InitializeSearchAgentKeyCredentialVersions(); err != nil {
 		return err
 	}
 	if err := InitializeUserAuthVersions(); err != nil {
@@ -320,6 +336,7 @@ func migrateDB() error {
 }
 
 func migrateDBFast() error {
+	subscriptionQuotaVersionState := inspectSubscriptionQuotaVersionMigration()
 
 	var wg sync.WaitGroup
 
@@ -329,6 +346,14 @@ func migrateDBFast() error {
 	}{
 		{&Channel{}, "Channel"},
 		{&Token{}, "Token"},
+		{&SearchAgentKey{}, "SearchAgentKey"},
+		{&SearchUpstreamPool{}, "SearchUpstreamPool"},
+		{&SearchUpstreamAccount{}, "SearchUpstreamAccount"},
+		{&SearchCapability{}, "SearchCapability"},
+		{&SearchCapabilityBinding{}, "SearchCapabilityBinding"},
+		{&SearchCapabilityGrant{}, "SearchCapabilityGrant"},
+		{&SearchUsageEvent{}, "SearchUsageEvent"},
+		{&SearchExecutionIdempotency{}, "SearchExecutionIdempotency"},
 		{&User{}, "User"},
 		{&Enterprise{}, "Enterprise"},
 		{&EnterpriseMembership{}, "EnterpriseMembership"},
@@ -357,6 +382,7 @@ func migrateDBFast() error {
 		{&SubscriptionOrder{}, "SubscriptionOrder"},
 		{&UserSubscription{}, "UserSubscription"},
 		{&SubscriptionPreConsumeRecord{}, "SubscriptionPreConsumeRecord"},
+		{&WalletPreConsumeRecord{}, "WalletPreConsumeRecord"},
 		{&CustomOAuthProvider{}, "CustomOAuthProvider"},
 		{&UserOAuthBinding{}, "UserOAuthBinding"},
 		{&PerfMetric{}, "PerfMetric"},
@@ -386,6 +412,12 @@ func migrateDBFast() error {
 		if err != nil {
 			return err
 		}
+	}
+	if err := finalizeSubscriptionQuotaVersionMigration(subscriptionQuotaVersionState); err != nil {
+		return err
+	}
+	if err := InitializeSearchAgentKeyCredentialVersions(); err != nil {
+		return err
 	}
 	if err := InitializeUserAuthVersions(); err != nil {
 		return err

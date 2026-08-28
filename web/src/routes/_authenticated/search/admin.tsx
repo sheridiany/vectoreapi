@@ -1,0 +1,23 @@
+/*
+Copyright (C) 2023-2026 QuantumNous
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+*/
+import { createFileRoute, redirect } from '@tanstack/react-router'
+
+import { requireSearchAgentKeyAdmin } from '@/features/search/route-guard'
+
+export const Route = createFileRoute('/_authenticated/search/admin')({
+  beforeLoad: () => {
+    requireSearchAgentKeyAdmin()
+    throw redirect({ to: '/search/admin/agent-keys' })
+  },
+})

@@ -53,6 +53,12 @@ import { Route as AuthenticatedModelsSectionRouteImport } from './routes/_authen
 import { Route as AuthenticatedPlaygroundIndexRouteImport } from './routes/_authenticated/playground/index'
 import { Route as AuthenticatedProfileIndexRouteImport } from './routes/_authenticated/profile/index'
 import { Route as AuthenticatedRedemptionCodesIndexRouteImport } from './routes/_authenticated/redemption-codes/index'
+import { Route as AuthenticatedSearchIndexRouteImport } from './routes/_authenticated/search/index'
+import { Route as AuthenticatedSearchAdminRouteImport } from './routes/_authenticated/search/admin'
+import { Route as AuthenticatedSearchCatalogRouteImport } from './routes/_authenticated/search/catalog'
+import { Route as AuthenticatedSearchKeysRouteImport } from './routes/_authenticated/search/keys'
+import { Route as AuthenticatedSearchLogsRouteImport } from './routes/_authenticated/search/logs'
+import { Route as AuthenticatedServicesIndexRouteImport } from './routes/_authenticated/services/index'
 import { Route as AuthenticatedSubscriptionsIndexRouteImport } from './routes/_authenticated/subscriptions/index'
 import { Route as AuthenticatedSystemInfoIndexRouteImport } from './routes/_authenticated/system-info/index'
 import { Route as AuthenticatedSystemSettingsIndexRouteImport } from './routes/_authenticated/system-settings/index'
@@ -62,6 +68,10 @@ import { Route as AuthenticatedUsersIndexRouteImport } from './routes/_authentic
 import { Route as AuthenticatedWalletIndexRouteImport } from './routes/_authenticated/wallet/index'
 import { Route as PricingModelIdIndexRouteImport } from './routes/pricing/$modelId/index'
 import { Route as AuthenticatedEnterpriseAdminRankingsRouteImport } from './routes/_authenticated/enterprise/admin_.rankings'
+import { Route as AuthenticatedSearchAdminAgentKeysRouteImport } from './routes/_authenticated/search/admin_.agent-keys'
+import { Route as AuthenticatedSearchAdminCatalogRouteImport } from './routes/_authenticated/search/admin_.catalog'
+import { Route as AuthenticatedSearchAdminUpstreamAccountsRouteImport } from './routes/_authenticated/search/admin_.upstream-accounts'
+import { Route as AuthenticatedSearchAdminUsageLogsRouteImport } from './routes/_authenticated/search/admin_.usage-logs'
 import { Route as AuthenticatedSystemSettingsAuthIndexRouteImport } from './routes/_authenticated/system-settings/auth/index'
 import { Route as AuthenticatedSystemSettingsAuthSectionRouteImport } from './routes/_authenticated/system-settings/auth/$section'
 import { Route as AuthenticatedSystemSettingsBillingIndexRouteImport } from './routes/_authenticated/system-settings/billing/index'
@@ -313,6 +323,40 @@ const AuthenticatedRedemptionCodesIndexRoute =
     path: '/redemption-codes/',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
+const AuthenticatedSearchIndexRoute =
+  AuthenticatedSearchIndexRouteImport.update({
+    id: '/search/',
+    path: '/search/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedSearchAdminRoute =
+  AuthenticatedSearchAdminRouteImport.update({
+    id: '/search/admin',
+    path: '/search/admin',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedSearchCatalogRoute =
+  AuthenticatedSearchCatalogRouteImport.update({
+    id: '/search/catalog',
+    path: '/search/catalog',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedSearchKeysRoute = AuthenticatedSearchKeysRouteImport.update({
+  id: '/search/keys',
+  path: '/search/keys',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedSearchLogsRoute = AuthenticatedSearchLogsRouteImport.update({
+  id: '/search/logs',
+  path: '/search/logs',
+  getParentRoute: () => AuthenticatedRouteRoute,
+} as any)
+const AuthenticatedServicesIndexRoute =
+  AuthenticatedServicesIndexRouteImport.update({
+    id: '/services/',
+    path: '/services/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedSubscriptionsIndexRoute =
   AuthenticatedSubscriptionsIndexRouteImport.update({
     id: '/subscriptions/',
@@ -363,6 +407,30 @@ const AuthenticatedEnterpriseAdminRankingsRoute =
   AuthenticatedEnterpriseAdminRankingsRouteImport.update({
     id: '/enterprise/admin_/rankings',
     path: '/enterprise/admin/rankings',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedSearchAdminAgentKeysRoute =
+  AuthenticatedSearchAdminAgentKeysRouteImport.update({
+    id: '/search/admin_/agent-keys',
+    path: '/search/admin/agent-keys',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedSearchAdminCatalogRoute =
+  AuthenticatedSearchAdminCatalogRouteImport.update({
+    id: '/search/admin_/catalog',
+    path: '/search/admin/catalog',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedSearchAdminUpstreamAccountsRoute =
+  AuthenticatedSearchAdminUpstreamAccountsRouteImport.update({
+    id: '/search/admin_/upstream-accounts',
+    path: '/search/admin/upstream-accounts',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedSearchAdminUsageLogsRoute =
+  AuthenticatedSearchAdminUsageLogsRouteImport.update({
+    id: '/search/admin_/usage-logs',
+    path: '/search/admin/usage-logs',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
 const AuthenticatedSystemSettingsAuthIndexRoute =
@@ -485,6 +553,10 @@ export interface FileRoutesByFullPath {
   '/enterprise/rankings': typeof AuthenticatedEnterpriseRankingsRoute
   '/errors/$error': typeof AuthenticatedErrorsErrorRoute
   '/models/$section': typeof AuthenticatedModelsSectionRoute
+  '/search/admin': typeof AuthenticatedSearchAdminRoute
+  '/search/catalog': typeof AuthenticatedSearchCatalogRoute
+  '/search/keys': typeof AuthenticatedSearchKeysRoute
+  '/search/logs': typeof AuthenticatedSearchLogsRoute
   '/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
   '/channels/': typeof AuthenticatedChannelsIndexRoute
   '/dashboard/': typeof AuthenticatedDashboardIndexRoute
@@ -494,6 +566,8 @@ export interface FileRoutesByFullPath {
   '/playground/': typeof AuthenticatedPlaygroundIndexRoute
   '/profile/': typeof AuthenticatedProfileIndexRoute
   '/redemption-codes/': typeof AuthenticatedRedemptionCodesIndexRoute
+  '/search/': typeof AuthenticatedSearchIndexRoute
+  '/services/': typeof AuthenticatedServicesIndexRoute
   '/subscriptions/': typeof AuthenticatedSubscriptionsIndexRoute
   '/system-info/': typeof AuthenticatedSystemInfoIndexRoute
   '/system-settings/': typeof AuthenticatedSystemSettingsIndexRoute
@@ -502,6 +576,10 @@ export interface FileRoutesByFullPath {
   '/wallet/': typeof AuthenticatedWalletIndexRoute
   '/pricing/$modelId/': typeof PricingModelIdIndexRoute
   '/enterprise/admin/rankings': typeof AuthenticatedEnterpriseAdminRankingsRoute
+  '/search/admin/agent-keys': typeof AuthenticatedSearchAdminAgentKeysRoute
+  '/search/admin/catalog': typeof AuthenticatedSearchAdminCatalogRoute
+  '/search/admin/upstream-accounts': typeof AuthenticatedSearchAdminUpstreamAccountsRoute
+  '/search/admin/usage-logs': typeof AuthenticatedSearchAdminUsageLogsRoute
   '/system-settings/auth/$section': typeof AuthenticatedSystemSettingsAuthSectionRoute
   '/system-settings/billing/$section': typeof AuthenticatedSystemSettingsBillingSectionRoute
   '/system-settings/content/$section': typeof AuthenticatedSystemSettingsContentSectionRoute
@@ -551,6 +629,10 @@ export interface FileRoutesByTo {
   '/enterprise/rankings': typeof AuthenticatedEnterpriseRankingsRoute
   '/errors/$error': typeof AuthenticatedErrorsErrorRoute
   '/models/$section': typeof AuthenticatedModelsSectionRoute
+  '/search/admin': typeof AuthenticatedSearchAdminRoute
+  '/search/catalog': typeof AuthenticatedSearchCatalogRoute
+  '/search/keys': typeof AuthenticatedSearchKeysRoute
+  '/search/logs': typeof AuthenticatedSearchLogsRoute
   '/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
   '/channels': typeof AuthenticatedChannelsIndexRoute
   '/dashboard': typeof AuthenticatedDashboardIndexRoute
@@ -560,6 +642,8 @@ export interface FileRoutesByTo {
   '/playground': typeof AuthenticatedPlaygroundIndexRoute
   '/profile': typeof AuthenticatedProfileIndexRoute
   '/redemption-codes': typeof AuthenticatedRedemptionCodesIndexRoute
+  '/search': typeof AuthenticatedSearchIndexRoute
+  '/services': typeof AuthenticatedServicesIndexRoute
   '/subscriptions': typeof AuthenticatedSubscriptionsIndexRoute
   '/system-info': typeof AuthenticatedSystemInfoIndexRoute
   '/system-settings': typeof AuthenticatedSystemSettingsIndexRoute
@@ -568,6 +652,10 @@ export interface FileRoutesByTo {
   '/wallet': typeof AuthenticatedWalletIndexRoute
   '/pricing/$modelId': typeof PricingModelIdIndexRoute
   '/enterprise/admin/rankings': typeof AuthenticatedEnterpriseAdminRankingsRoute
+  '/search/admin/agent-keys': typeof AuthenticatedSearchAdminAgentKeysRoute
+  '/search/admin/catalog': typeof AuthenticatedSearchAdminCatalogRoute
+  '/search/admin/upstream-accounts': typeof AuthenticatedSearchAdminUpstreamAccountsRoute
+  '/search/admin/usage-logs': typeof AuthenticatedSearchAdminUsageLogsRoute
   '/system-settings/auth/$section': typeof AuthenticatedSystemSettingsAuthSectionRoute
   '/system-settings/billing/$section': typeof AuthenticatedSystemSettingsBillingSectionRoute
   '/system-settings/content/$section': typeof AuthenticatedSystemSettingsContentSectionRoute
@@ -621,6 +709,10 @@ export interface FileRoutesById {
   '/_authenticated/enterprise/rankings': typeof AuthenticatedEnterpriseRankingsRoute
   '/_authenticated/errors/$error': typeof AuthenticatedErrorsErrorRoute
   '/_authenticated/models/$section': typeof AuthenticatedModelsSectionRoute
+  '/_authenticated/search/admin': typeof AuthenticatedSearchAdminRoute
+  '/_authenticated/search/catalog': typeof AuthenticatedSearchCatalogRoute
+  '/_authenticated/search/keys': typeof AuthenticatedSearchKeysRoute
+  '/_authenticated/search/logs': typeof AuthenticatedSearchLogsRoute
   '/_authenticated/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
   '/_authenticated/channels/': typeof AuthenticatedChannelsIndexRoute
   '/_authenticated/dashboard/': typeof AuthenticatedDashboardIndexRoute
@@ -630,6 +722,8 @@ export interface FileRoutesById {
   '/_authenticated/playground/': typeof AuthenticatedPlaygroundIndexRoute
   '/_authenticated/profile/': typeof AuthenticatedProfileIndexRoute
   '/_authenticated/redemption-codes/': typeof AuthenticatedRedemptionCodesIndexRoute
+  '/_authenticated/search/': typeof AuthenticatedSearchIndexRoute
+  '/_authenticated/services/': typeof AuthenticatedServicesIndexRoute
   '/_authenticated/subscriptions/': typeof AuthenticatedSubscriptionsIndexRoute
   '/_authenticated/system-info/': typeof AuthenticatedSystemInfoIndexRoute
   '/_authenticated/system-settings/': typeof AuthenticatedSystemSettingsIndexRoute
@@ -638,6 +732,10 @@ export interface FileRoutesById {
   '/_authenticated/wallet/': typeof AuthenticatedWalletIndexRoute
   '/pricing/$modelId/': typeof PricingModelIdIndexRoute
   '/_authenticated/enterprise/admin_/rankings': typeof AuthenticatedEnterpriseAdminRankingsRoute
+  '/_authenticated/search/admin_/agent-keys': typeof AuthenticatedSearchAdminAgentKeysRoute
+  '/_authenticated/search/admin_/catalog': typeof AuthenticatedSearchAdminCatalogRoute
+  '/_authenticated/search/admin_/upstream-accounts': typeof AuthenticatedSearchAdminUpstreamAccountsRoute
+  '/_authenticated/search/admin_/usage-logs': typeof AuthenticatedSearchAdminUsageLogsRoute
   '/_authenticated/system-settings/auth/$section': typeof AuthenticatedSystemSettingsAuthSectionRoute
   '/_authenticated/system-settings/billing/$section': typeof AuthenticatedSystemSettingsBillingSectionRoute
   '/_authenticated/system-settings/content/$section': typeof AuthenticatedSystemSettingsContentSectionRoute
@@ -690,6 +788,10 @@ export interface FileRouteTypes {
     | '/enterprise/rankings'
     | '/errors/$error'
     | '/models/$section'
+    | '/search/admin'
+    | '/search/catalog'
+    | '/search/keys'
+    | '/search/logs'
     | '/usage-logs/$section'
     | '/channels/'
     | '/dashboard/'
@@ -699,6 +801,8 @@ export interface FileRouteTypes {
     | '/playground/'
     | '/profile/'
     | '/redemption-codes/'
+    | '/search/'
+    | '/services/'
     | '/subscriptions/'
     | '/system-info/'
     | '/system-settings/'
@@ -707,6 +811,10 @@ export interface FileRouteTypes {
     | '/wallet/'
     | '/pricing/$modelId/'
     | '/enterprise/admin/rankings'
+    | '/search/admin/agent-keys'
+    | '/search/admin/catalog'
+    | '/search/admin/upstream-accounts'
+    | '/search/admin/usage-logs'
     | '/system-settings/auth/$section'
     | '/system-settings/billing/$section'
     | '/system-settings/content/$section'
@@ -756,6 +864,10 @@ export interface FileRouteTypes {
     | '/enterprise/rankings'
     | '/errors/$error'
     | '/models/$section'
+    | '/search/admin'
+    | '/search/catalog'
+    | '/search/keys'
+    | '/search/logs'
     | '/usage-logs/$section'
     | '/channels'
     | '/dashboard'
@@ -765,6 +877,8 @@ export interface FileRouteTypes {
     | '/playground'
     | '/profile'
     | '/redemption-codes'
+    | '/search'
+    | '/services'
     | '/subscriptions'
     | '/system-info'
     | '/system-settings'
@@ -773,6 +887,10 @@ export interface FileRouteTypes {
     | '/wallet'
     | '/pricing/$modelId'
     | '/enterprise/admin/rankings'
+    | '/search/admin/agent-keys'
+    | '/search/admin/catalog'
+    | '/search/admin/upstream-accounts'
+    | '/search/admin/usage-logs'
     | '/system-settings/auth/$section'
     | '/system-settings/billing/$section'
     | '/system-settings/content/$section'
@@ -825,6 +943,10 @@ export interface FileRouteTypes {
     | '/_authenticated/enterprise/rankings'
     | '/_authenticated/errors/$error'
     | '/_authenticated/models/$section'
+    | '/_authenticated/search/admin'
+    | '/_authenticated/search/catalog'
+    | '/_authenticated/search/keys'
+    | '/_authenticated/search/logs'
     | '/_authenticated/usage-logs/$section'
     | '/_authenticated/channels/'
     | '/_authenticated/dashboard/'
@@ -834,6 +956,8 @@ export interface FileRouteTypes {
     | '/_authenticated/playground/'
     | '/_authenticated/profile/'
     | '/_authenticated/redemption-codes/'
+    | '/_authenticated/search/'
+    | '/_authenticated/services/'
     | '/_authenticated/subscriptions/'
     | '/_authenticated/system-info/'
     | '/_authenticated/system-settings/'
@@ -842,6 +966,10 @@ export interface FileRouteTypes {
     | '/_authenticated/wallet/'
     | '/pricing/$modelId/'
     | '/_authenticated/enterprise/admin_/rankings'
+    | '/_authenticated/search/admin_/agent-keys'
+    | '/_authenticated/search/admin_/catalog'
+    | '/_authenticated/search/admin_/upstream-accounts'
+    | '/_authenticated/search/admin_/usage-logs'
     | '/_authenticated/system-settings/auth/$section'
     | '/_authenticated/system-settings/billing/$section'
     | '/_authenticated/system-settings/content/$section'
@@ -1187,6 +1315,48 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedRedemptionCodesIndexRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/search/': {
+      id: '/_authenticated/search/'
+      path: '/search'
+      fullPath: '/search/'
+      preLoaderRoute: typeof AuthenticatedSearchIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/search/admin': {
+      id: '/_authenticated/search/admin'
+      path: '/search/admin'
+      fullPath: '/search/admin'
+      preLoaderRoute: typeof AuthenticatedSearchAdminRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/search/catalog': {
+      id: '/_authenticated/search/catalog'
+      path: '/search/catalog'
+      fullPath: '/search/catalog'
+      preLoaderRoute: typeof AuthenticatedSearchCatalogRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/search/keys': {
+      id: '/_authenticated/search/keys'
+      path: '/search/keys'
+      fullPath: '/search/keys'
+      preLoaderRoute: typeof AuthenticatedSearchKeysRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/search/logs': {
+      id: '/_authenticated/search/logs'
+      path: '/search/logs'
+      fullPath: '/search/logs'
+      preLoaderRoute: typeof AuthenticatedSearchLogsRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/services/': {
+      id: '/_authenticated/services/'
+      path: '/services'
+      fullPath: '/services/'
+      preLoaderRoute: typeof AuthenticatedServicesIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/subscriptions/': {
       id: '/_authenticated/subscriptions/'
       path: '/subscriptions'
@@ -1248,6 +1418,34 @@ declare module '@tanstack/react-router' {
       path: '/enterprise/admin/rankings'
       fullPath: '/enterprise/admin/rankings'
       preLoaderRoute: typeof AuthenticatedEnterpriseAdminRankingsRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/search/admin_/agent-keys': {
+      id: '/_authenticated/search/admin_/agent-keys'
+      path: '/search/admin/agent-keys'
+      fullPath: '/search/admin/agent-keys'
+      preLoaderRoute: typeof AuthenticatedSearchAdminAgentKeysRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/search/admin_/catalog': {
+      id: '/_authenticated/search/admin_/catalog'
+      path: '/search/admin/catalog'
+      fullPath: '/search/admin/catalog'
+      preLoaderRoute: typeof AuthenticatedSearchAdminCatalogRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/search/admin_/upstream-accounts': {
+      id: '/_authenticated/search/admin_/upstream-accounts'
+      path: '/search/admin/upstream-accounts'
+      fullPath: '/search/admin/upstream-accounts'
+      preLoaderRoute: typeof AuthenticatedSearchAdminUpstreamAccountsRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/search/admin_/usage-logs': {
+      id: '/_authenticated/search/admin_/usage-logs'
+      path: '/search/admin/usage-logs'
+      fullPath: '/search/admin/usage-logs'
+      preLoaderRoute: typeof AuthenticatedSearchAdminUsageLogsRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/system-settings/auth/': {
@@ -1448,6 +1646,10 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedEnterpriseRankingsRoute: typeof AuthenticatedEnterpriseRankingsRoute
   AuthenticatedErrorsErrorRoute: typeof AuthenticatedErrorsErrorRoute
   AuthenticatedModelsSectionRoute: typeof AuthenticatedModelsSectionRoute
+  AuthenticatedSearchAdminRoute: typeof AuthenticatedSearchAdminRoute
+  AuthenticatedSearchCatalogRoute: typeof AuthenticatedSearchCatalogRoute
+  AuthenticatedSearchKeysRoute: typeof AuthenticatedSearchKeysRoute
+  AuthenticatedSearchLogsRoute: typeof AuthenticatedSearchLogsRoute
   AuthenticatedUsageLogsSectionRoute: typeof AuthenticatedUsageLogsSectionRoute
   AuthenticatedChannelsIndexRoute: typeof AuthenticatedChannelsIndexRoute
   AuthenticatedDashboardIndexRoute: typeof AuthenticatedDashboardIndexRoute
@@ -1457,12 +1659,18 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedPlaygroundIndexRoute: typeof AuthenticatedPlaygroundIndexRoute
   AuthenticatedProfileIndexRoute: typeof AuthenticatedProfileIndexRoute
   AuthenticatedRedemptionCodesIndexRoute: typeof AuthenticatedRedemptionCodesIndexRoute
+  AuthenticatedSearchIndexRoute: typeof AuthenticatedSearchIndexRoute
+  AuthenticatedServicesIndexRoute: typeof AuthenticatedServicesIndexRoute
   AuthenticatedSubscriptionsIndexRoute: typeof AuthenticatedSubscriptionsIndexRoute
   AuthenticatedSystemInfoIndexRoute: typeof AuthenticatedSystemInfoIndexRoute
   AuthenticatedUsageLogsIndexRoute: typeof AuthenticatedUsageLogsIndexRoute
   AuthenticatedUsersIndexRoute: typeof AuthenticatedUsersIndexRoute
   AuthenticatedWalletIndexRoute: typeof AuthenticatedWalletIndexRoute
   AuthenticatedEnterpriseAdminRankingsRoute: typeof AuthenticatedEnterpriseAdminRankingsRoute
+  AuthenticatedSearchAdminAgentKeysRoute: typeof AuthenticatedSearchAdminAgentKeysRoute
+  AuthenticatedSearchAdminCatalogRoute: typeof AuthenticatedSearchAdminCatalogRoute
+  AuthenticatedSearchAdminUpstreamAccountsRoute: typeof AuthenticatedSearchAdminUpstreamAccountsRoute
+  AuthenticatedSearchAdminUsageLogsRoute: typeof AuthenticatedSearchAdminUsageLogsRoute
 }
 
 const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
@@ -1481,6 +1689,10 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedEnterpriseRankingsRoute: AuthenticatedEnterpriseRankingsRoute,
   AuthenticatedErrorsErrorRoute: AuthenticatedErrorsErrorRoute,
   AuthenticatedModelsSectionRoute: AuthenticatedModelsSectionRoute,
+  AuthenticatedSearchAdminRoute: AuthenticatedSearchAdminRoute,
+  AuthenticatedSearchCatalogRoute: AuthenticatedSearchCatalogRoute,
+  AuthenticatedSearchKeysRoute: AuthenticatedSearchKeysRoute,
+  AuthenticatedSearchLogsRoute: AuthenticatedSearchLogsRoute,
   AuthenticatedUsageLogsSectionRoute: AuthenticatedUsageLogsSectionRoute,
   AuthenticatedChannelsIndexRoute: AuthenticatedChannelsIndexRoute,
   AuthenticatedDashboardIndexRoute: AuthenticatedDashboardIndexRoute,
@@ -1491,6 +1703,8 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedProfileIndexRoute: AuthenticatedProfileIndexRoute,
   AuthenticatedRedemptionCodesIndexRoute:
     AuthenticatedRedemptionCodesIndexRoute,
+  AuthenticatedSearchIndexRoute: AuthenticatedSearchIndexRoute,
+  AuthenticatedServicesIndexRoute: AuthenticatedServicesIndexRoute,
   AuthenticatedSubscriptionsIndexRoute: AuthenticatedSubscriptionsIndexRoute,
   AuthenticatedSystemInfoIndexRoute: AuthenticatedSystemInfoIndexRoute,
   AuthenticatedUsageLogsIndexRoute: AuthenticatedUsageLogsIndexRoute,
@@ -1498,6 +1712,13 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedWalletIndexRoute: AuthenticatedWalletIndexRoute,
   AuthenticatedEnterpriseAdminRankingsRoute:
     AuthenticatedEnterpriseAdminRankingsRoute,
+  AuthenticatedSearchAdminAgentKeysRoute:
+    AuthenticatedSearchAdminAgentKeysRoute,
+  AuthenticatedSearchAdminCatalogRoute: AuthenticatedSearchAdminCatalogRoute,
+  AuthenticatedSearchAdminUpstreamAccountsRoute:
+    AuthenticatedSearchAdminUpstreamAccountsRoute,
+  AuthenticatedSearchAdminUsageLogsRoute:
+    AuthenticatedSearchAdminUsageLogsRoute,
 }
 
 const AuthenticatedRouteRouteWithChildren =

@@ -66,6 +66,14 @@ func SetRelayRouter(router *gin.Engine) {
 	{
 		playgroundRouter.POST("/chat/completions", controller.Playground)
 	}
+	searchMCPRouter := router.Group("/v1")
+	searchMCPRouter.Use(middleware.RouteTag("vsearch"))
+	searchMCPRouter.Use(middleware.AnonymousRequestBodyLimit())
+	searchMCPRouter.Use(middleware.CriticalRateLimit())
+	searchMCPRouter.Use(middleware.SearchAgentKeyAuth())
+	{
+		searchMCPRouter.POST("/mcp", controller.HandleSearchMCP)
+	}
 	relayV1Router := router.Group("/v1")
 	relayV1Router.Use(middleware.RouteTag("relay"))
 	relayV1Router.Use(middleware.SystemPerformanceCheck())

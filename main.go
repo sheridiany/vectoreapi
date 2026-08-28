@@ -45,6 +45,12 @@ var buildFS embed.FS
 //go:embed web/dist/index.html
 var indexPage []byte
 
+//go:embed public/install.sh
+var vSearchInstallSh []byte
+
+//go:embed public/install.ps1
+var vSearchInstallPs1 []byte
+
 func main() {
 	startTime := time.Now()
 	kitutil.SetLogging(common.SysLog, func(message string) {
@@ -196,8 +202,10 @@ func main() {
 
 	// 设置路由
 	router.SetRouter(server, router.WebAssets{
-		BuildFS:   buildFS,
-		IndexPage: indexPage,
+		BuildFS:    buildFS,
+		IndexPage:  indexPage,
+		InstallSh:  vSearchInstallSh,
+		InstallPs1: vSearchInstallPs1,
 	})
 	var port = os.Getenv("PORT")
 	if port == "" {

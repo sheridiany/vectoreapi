@@ -51,6 +51,9 @@ func runSubscriptionQuotaResetOnce() {
 	defer subscriptionResetRunning.Store(false)
 
 	ctx := context.Background()
+	if err := model.ReconcileStaleSearchUsageEvents(common.GetTimestamp()); err != nil {
+		logger.LogWarn(ctx, fmt.Sprintf("vSearch billing reconciliation failed: %v", err))
+	}
 	totalReset := 0
 	totalExpired := 0
 	for {
@@ -83,7 +86,9 @@ func runSubscriptionQuotaResetOnce() {
 	}
 	lastCleanup := time.Unix(subscriptionCleanupLast.Load(), 0)
 	if time.Since(lastCleanup) >= subscriptionCleanupInterval {
-		if _, err := model.CleanupSubscriptionPreConsumeRecords(7 * 24 * 3600); err == nil {
+		_, subscriptionErr := model.CleanupSubscriptionPreConsumeRecords(7 * 24 * 3600)
+		_, walletErr := model.CleanupWalletPreConsumeRecords(7 * 24 * 3600)
+		if subscriptionErr == nil && walletErr == nil {
 			subscriptionCleanupLast.Store(time.Now().Unix())
 		}
 	}

@@ -44,7 +44,18 @@ export function handleServerError(error: unknown) {
   }
 
   if (error instanceof AxiosError) {
-    errMsg = error.response?.data.title
+    const data = error.response?.data
+    if (data && typeof data.title === 'string' && data.title.trim()) {
+      errMsg = data.title
+    } else if (
+      data &&
+      typeof data.message === 'string' &&
+      data.message.trim()
+    ) {
+      errMsg = data.message
+    } else if (error.message) {
+      errMsg = error.message
+    }
   }
 
   toast.error(errMsg)

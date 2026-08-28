@@ -15,8 +15,10 @@ import (
 
 // WebAssets holds the embedded dashboard frontend assets.
 type WebAssets struct {
-	BuildFS   embed.FS
-	IndexPage []byte
+	BuildFS    embed.FS
+	IndexPage  []byte
+	InstallSh  []byte
+	InstallPs1 []byte
 }
 
 func SetWebRouter(router *gin.Engine, assets WebAssets) {
@@ -26,6 +28,12 @@ func SetWebRouter(router *gin.Engine, assets WebAssets) {
 	router.Use(middleware.GlobalWebRateLimit())
 	router.Use(middleware.Cache())
 	router.Use(static.Serve("/", frontendFS))
+	router.GET("/install.sh", func(c *gin.Context) {
+		c.Data(http.StatusOK, "text/plain; charset=utf-8", assets.InstallSh)
+	})
+	router.GET("/install.ps1", func(c *gin.Context) {
+		c.Data(http.StatusOK, "text/plain; charset=utf-8", assets.InstallPs1)
+	})
 	router.NoRoute(func(c *gin.Context) {
 		c.Set(middleware.RouteTagKey, "web")
 		if strings.HasPrefix(c.Request.RequestURI, "/v1") || strings.HasPrefix(c.Request.RequestURI, "/api") || strings.HasPrefix(c.Request.RequestURI, "/assets") {
