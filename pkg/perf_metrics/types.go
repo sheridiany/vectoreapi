@@ -1,6 +1,9 @@
 package perfmetrics
 
-import "sync/atomic"
+import (
+	"sync"
+	"sync/atomic"
+)
 
 type Store interface {
 	Record(sample Sample)
@@ -8,6 +11,7 @@ type Store interface {
 }
 
 type Sample struct {
+	EnterpriseID int
 	Model        string
 	Group        string
 	LatencyMs    int64
@@ -19,9 +23,10 @@ type Sample struct {
 }
 
 type QueryParams struct {
-	Model string
-	Group string
-	Hours int
+	EnterpriseID int
+	Model        string
+	Group        string
+	Hours        int
 }
 
 type BucketPoint struct {
@@ -61,9 +66,10 @@ type SummaryAllResult struct {
 }
 
 type bucketKey struct {
-	model    string
-	group    string
-	bucketTs int64
+	enterpriseID int
+	model        string
+	group        string
+	bucketTs     int64
 }
 
 type counters struct {
@@ -77,16 +83,24 @@ type counters struct {
 }
 
 type atomicBucket struct {
-	requestCount   atomic.Int64
-	successCount   atomic.Int64
-	totalLatencyMs atomic.Int64
-	ttftSumMs      atomic.Int64
-	ttftCount      atomic.Int64
-	outputTokens   atomic.Int64
-	generationMs   atomic.Int64
+	sampleMu                  sync.Mutex
+	closed                    bool
+	lastPublishedRequestCount atomic.Int64
+	requestCount              atomic.Int64
+	successCount              atomic.Int64
+	totalLatencyMs            atomic.Int64
+	ttftSumMs                 atomic.Int64
+	ttftCount                 atomic.Int64
+	outputTokens              atomic.Int64
+	generationMs              atomic.Int64
 }
 
-func (b *atomicBucket) add(sample Sample) {
+func (b *atomicBucket) add(sample Sample) bool {
+	b.sampleMu.Lock()
+	defer b.sampleMu.Unlock()
+	if b.closed {
+		return false
+	}
 	b.requestCount.Add(1)
 	if sample.Success {
 		b.successCount.Add(1)
@@ -102,9 +116,12 @@ func (b *atomicBucket) add(sample Sample) {
 		b.outputTokens.Add(sample.OutputTokens)
 		b.generationMs.Add(sample.GenerationMs)
 	}
+	return true
 }
 
 func (b *atomicBucket) snapshot() counters {
+	b.sampleMu.Lock()
+	defer b.sampleMu.Unlock()
 	return counters{
 		requestCount:   b.requestCount.Load(),
 		successCount:   b.successCount.Load(),
@@ -117,6 +134,8 @@ func (b *atomicBucket) snapshot() counters {
 }
 
 func (b *atomicBucket) drain() counters {
+	b.sampleMu.Lock()
+	defer b.sampleMu.Unlock()
 	return counters{
 		requestCount:   b.requestCount.Swap(0),
 		successCount:   b.successCount.Swap(0),
@@ -129,6 +148,9 @@ func (b *atomicBucket) drain() counters {
 }
 
 func (b *atomicBucket) addCounters(c counters) {
+	b.sampleMu.Lock()
+	defer b.sampleMu.Unlock()
+	b.closed = false
 	if c.requestCount != 0 {
 		b.requestCount.Add(c.requestCount)
 	}
@@ -149,5 +171,24 @@ func (b *atomicBucket) addCounters(c counters) {
 	}
 	if c.generationMs != 0 {
 		b.generationMs.Add(c.generationMs)
+	}
+}
+
+func (b *atomicBucket) closeIfEmpty() bool {
+	b.sampleMu.Lock()
+	defer b.sampleMu.Unlock()
+	if b.requestCount.Load() != 0 {
+		return false
+	}
+	b.closed = true
+	return true
+}
+
+func (b *atomicBucket) markPublished(requestCount int64) {
+	for {
+		current := b.lastPublishedRequestCount.Load()
+		if current >= requestCount || b.lastPublishedRequestCount.CompareAndSwap(current, requestCount) {
+			return
+		}
 	}
 }

@@ -25,13 +25,6 @@ import { useTranslation } from 'react-i18next'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
 import { IconBadge } from '@/components/ui/icon-badge'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useTheme } from '@/context/theme-provider'
@@ -49,12 +42,9 @@ import type {
   ProcessedUserChartData,
   UserChartsFilters,
 } from '@/features/dashboard/types'
-import { getEnterprises } from '@/features/enterprise/api'
 import { formatQuota } from '@/lib/format'
-import { ROLE } from '@/lib/roles'
 import { getRollingDateRange, type TimeGranularity } from '@/lib/time'
 import { VCHART_OPTION } from '@/lib/vchart'
-import { useAuthStore } from '@/stores/auth-store'
 
 let themeManagerPromise: Promise<
   (typeof import('@visactor/vchart'))['ThemeManager']
@@ -87,6 +77,7 @@ const RANK_TONE_CLASSES = [
 
 interface UserChartsProps {
   filters: UserChartsFilters
+  enterpriseId?: number
   onFiltersChange: (filters: UserChartsFilters) => void
 }
 
@@ -178,8 +169,6 @@ function UserRankingList(props: UserRankingListProps) {
 export function UserCharts(props: UserChartsProps) {
   const { t } = useTranslation()
   const { resolvedTheme } = useTheme()
-  const userRole = useAuthStore((state) => state.auth.user?.role)
-  const isRoot = userRole === ROLE.SUPER_ADMIN
   const [themeReady, setThemeReady] = useState(false)
   const themeManagerRef = useRef<
     (typeof import('@visactor/vchart'))['ThemeManager'] | null
@@ -190,7 +179,6 @@ export function UserCharts(props: UserChartsProps) {
   const timeGranularity = props.filters.timeGranularity
   const selectedRange = props.filters.selectedRange
   const topUserLimit = props.filters.topUserLimit
-  const enterpriseId = props.filters.enterpriseId
   const onFiltersChange = props.onFiltersChange
 
   const timeRange = useMemo(() => {
@@ -244,46 +232,20 @@ export function UserCharts(props: UserChartsProps) {
   }, [resolvedTheme])
 
   const { data: userData, isLoading } = useQuery({
-    queryKey: ['dashboard', 'user-quota', timeRange, enterpriseId ?? 'all'],
+    queryKey: [
+      'dashboard',
+      'user-quota',
+      timeRange,
+      props.enterpriseId ?? 'all',
+    ],
     queryFn: () =>
       getUserQuotaDataByUsers({
         ...timeRange,
-        enterprise_id: enterpriseId,
+        enterprise_id: props.enterpriseId,
       }),
     select: (res) => (res.success ? res.data : []),
     staleTime: 60_000,
   })
-
-  const enterprisesQuery = useQuery({
-    queryKey: ['enterprise-admin', 'enterprises'],
-    queryFn: async () => {
-      const response = await getEnterprises()
-      if (!response.success) {
-        throw new Error(response.message || t('Unable to load enterprises'))
-      }
-      return response.data?.items ?? []
-    },
-    enabled: isRoot,
-    staleTime: 60_000,
-  })
-
-  const handleEnterpriseChange = useCallback(
-    (value: string | null) => {
-      onFiltersChange({
-        ...props.filters,
-        enterpriseId: value && value !== 'all' ? Number(value) : undefined,
-      })
-    },
-    [onFiltersChange, props.filters]
-  )
-
-  const selectedEnterprise = enterprisesQuery.data?.find(
-    (enterprise) => enterprise.id === enterpriseId
-  )
-  const enterpriseTriggerLabel =
-    enterpriseId === undefined
-      ? t('All')
-      : (selectedEnterprise?.name ?? String(enterpriseId))
 
   const chartData = useMemo(
     () =>
@@ -390,38 +352,6 @@ export function UserCharts(props: UserChartsProps) {
             ))}
           </TabsList>
         </Tabs>
-
-        {isRoot && (
-          <div className='ml-auto flex shrink-0 items-center gap-2'>
-            <span className='text-muted-foreground text-xs font-medium whitespace-nowrap'>
-              {t('Enterprise filter')}
-            </span>
-            <Select
-              value={enterpriseId === undefined ? 'all' : String(enterpriseId)}
-              onValueChange={handleEnterpriseChange}
-            >
-              <SelectTrigger
-                aria-label={t('Enterprise filter')}
-                className='w-[180px]'
-                disabled={
-                  enterprisesQuery.isLoading || enterprisesQuery.isError
-                }
-              >
-                <SelectValue placeholder={t('All')}>
-                  {enterpriseTriggerLabel}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectContent alignItemWithTrigger={false}>
-                <SelectItem value='all'>{t('All')}</SelectItem>
-                {enterprisesQuery.data?.map((enterprise) => (
-                  <SelectItem key={enterprise.id} value={String(enterprise.id)}>
-                    {enterprise.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        )}
 
         {isLoading && (
           <Loader2 className='text-muted-foreground size-4 animate-spin' />

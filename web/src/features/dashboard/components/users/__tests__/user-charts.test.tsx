@@ -2,9 +2,9 @@
 Copyright (C) 2023-2026 QuantumNous
 
 This program is free software: you can redistribute it and/or modify
-it under the terms of the GNU Affero General Public License as published by
-the Free Software Foundation, either version 3 of the License, or
-(at your option) any later version.
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
 
 This program is distributed in the hope that it will be useful,
 but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -18,27 +18,19 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, waitFor } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
 import { createInstance } from 'i18next'
 import { useState } from 'react'
 import { I18nextProvider, initReactI18next } from 'react-i18next'
 import { describe, expect, test, vi } from 'vitest'
 
 import type { UserChartsFilters } from '@/features/dashboard/types'
-import { ROLE } from '@/lib/roles'
-import { useAuthStore } from '@/stores/auth-store'
 
 import { UserCharts } from '../user-charts'
 
 const getUserQuotaDataByUsers = vi.hoisted(() => vi.fn())
-const getEnterprises = vi.hoisted(() => vi.fn())
 
 vi.mock('@/features/dashboard/api', () => ({
   getUserQuotaDataByUsers,
-}))
-
-vi.mock('@/features/enterprise/api', () => ({
-  getEnterprises,
 }))
 
 vi.mock('@/context/theme-provider', () => ({
@@ -59,8 +51,6 @@ await i18n.use(initReactI18next).init({
   resources: {
     en: {
       translation: {
-        All: 'All',
-        'Enterprise filter': 'Enterprise filter',
         'User Consumption Ranking': 'User Consumption Ranking',
         'User Consumption Trend': 'User Consumption Trend',
         'Top Users': 'Top Users',
@@ -75,13 +65,12 @@ await i18n.use(initReactI18next).init({
         '7 Days': '7 Days',
         '14 Days': '14 Days',
         '29 Days': '29 Days',
-        'Unable to load enterprises': 'Unable to load enterprises',
       },
     },
   },
 })
 
-function renderCharts() {
+function renderCharts(enterpriseId?: number) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
@@ -92,7 +81,13 @@ function renderCharts() {
       selectedRange: 7,
       topUserLimit: 10,
     })
-    return <UserCharts filters={filters} onFiltersChange={setFilters} />
+    return (
+      <UserCharts
+        filters={filters}
+        enterpriseId={enterpriseId}
+        onFiltersChange={setFilters}
+      />
+    )
   }
 
   return render(
@@ -104,34 +99,10 @@ function renderCharts() {
   )
 }
 
-describe('user charts enterprise filter', () => {
-  test('loads enterprise options and requests the selected enterprise data', async () => {
-    useAuthStore.getState().auth.setUser({
-      id: 1,
-      username: 'root',
-      role: ROLE.SUPER_ADMIN,
-    })
+describe('user charts enterprise scope', () => {
+  test('requests data for the enterprise selected by the dashboard parent', async () => {
     getUserQuotaDataByUsers.mockResolvedValue({ success: true, data: [] })
-    getEnterprises.mockResolvedValue({
-      success: true,
-      data: {
-        items: [
-          { id: 2, name: 'Star Data', code: 'star-data' },
-          { id: 3, name: 'Vector Epoch', code: 'vector-epoch' },
-        ],
-      },
-    })
-
-    const user = userEvent.setup()
-    renderCharts()
-
-    const trigger = await screen.findByRole('combobox', {
-      name: 'Enterprise filter',
-    })
-    await user.click(trigger)
-    await user.click(screen.getByRole('option', { name: 'Star Data' }))
-
-    expect(trigger).toHaveTextContent('Star Data')
+    renderCharts(2)
 
     await waitFor(() => {
       expect(getUserQuotaDataByUsers).toHaveBeenLastCalledWith(
@@ -141,11 +112,6 @@ describe('user charts enterprise filter', () => {
   })
 
   test('renders user consumption as ranked cards instead of a bar chart', async () => {
-    useAuthStore.getState().auth.setUser({
-      id: 1,
-      username: 'root',
-      role: ROLE.SUPER_ADMIN,
-    })
     getUserQuotaDataByUsers.mockResolvedValue({
       success: true,
       data: [
@@ -159,8 +125,6 @@ describe('user charts enterprise filter', () => {
         { username: 'Bob', quota: 20, created_at: 1 },
       ],
     })
-    getEnterprises.mockResolvedValue({ success: true, data: { items: [] } })
-
     renderCharts()
 
     expect(
@@ -170,14 +134,8 @@ describe('user charts enterprise filter', () => {
     expect(screen.getByText('Bob')).toBeInTheDocument()
   })
 
-  test('does not expose the enterprise filter to regular administrators', () => {
-    useAuthStore.getState().auth.setUser({
-      id: 2,
-      username: 'admin',
-      role: ROLE.ADMIN,
-    })
+  test('does not render a page-local enterprise selector', () => {
     getUserQuotaDataByUsers.mockResolvedValue({ success: true, data: [] })
-    getEnterprises.mockResolvedValue({ success: true, data: { items: [] } })
 
     renderCharts()
 

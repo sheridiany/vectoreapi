@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -8,7 +9,46 @@ import (
 	"github.com/QuantumNous/new-api/model"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
+
+func dashboardEnterpriseScope(c *gin.Context) (int, bool) {
+	rawEnterpriseID, exists := c.GetQuery("enterprise_id")
+	if !exists {
+		return 0, true
+	}
+	if c.GetInt("role") < common.RoleRootUser {
+		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+			"success": false,
+			"message": "only root users can select an enterprise",
+		})
+		return 0, false
+	}
+	enterpriseID, err := strconv.Atoi(rawEnterpriseID)
+	if err != nil || enterpriseID <= 0 {
+		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "invalid enterprise_id",
+		})
+		return 0, false
+	}
+	if _, err := model.GetEnterpriseByID(enterpriseID); err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.AbortWithStatusJSON(http.StatusNotFound, gin.H{
+				"success": false,
+				"message": "enterprise not found",
+			})
+		} else {
+			common.SysLog("failed to load dashboard enterprise: " + err.Error())
+			c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
+				"success": false,
+				"message": "failed to load enterprise",
+			})
+		}
+		return 0, false
+	}
+	return enterpriseID, true
+}
 
 func parseFlowQuotaTimeRange(c *gin.Context) (int64, int64, bool) {
 	startTimestamp, err := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
@@ -29,10 +69,14 @@ func parseFlowQuotaTimeRange(c *gin.Context) (int64, int64, bool) {
 }
 
 func GetAllQuotaDates(c *gin.Context) {
+	enterpriseID, ok := dashboardEnterpriseScope(c)
+	if !ok {
+		return
+	}
 	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
 	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
 	username := c.Query("username")
-	dates, err := model.GetAllQuotaDates(startTimestamp, endTimestamp, username)
+	dates, err := model.GetAllQuotaDates(startTimestamp, endTimestamp, username, enterpriseID)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -48,14 +92,9 @@ func GetAllQuotaDates(c *gin.Context) {
 func GetQuotaDatesByUser(c *gin.Context) {
 	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
 	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
-	enterpriseID := 0
-	if rawEnterpriseID := c.Query("enterprise_id"); rawEnterpriseID != "" {
-		parsedEnterpriseID, err := strconv.Atoi(rawEnterpriseID)
-		if err != nil || parsedEnterpriseID <= 0 {
-			common.ApiErrorMsg(c, "invalid enterprise_id")
-			return
-		}
-		enterpriseID = parsedEnterpriseID
+	enterpriseID, ok := dashboardEnterpriseScope(c)
+	if !ok {
+		return
 	}
 	dates, err := model.GetQuotaDataGroupByUser(startTimestamp, endTimestamp, enterpriseID)
 	if err != nil {
@@ -120,12 +159,16 @@ func GetUserQuotaDates(c *gin.Context) {
 }
 
 func GetAllFlowQuotaDates(c *gin.Context) {
+	enterpriseID, ok := dashboardEnterpriseScope(c)
+	if !ok {
+		return
+	}
 	startTimestamp, endTimestamp, ok := parseFlowQuotaTimeRange(c)
 	if !ok {
 		return
 	}
 	username := c.Query("username")
-	dates, err := model.GetFlowQuotaData(startTimestamp, endTimestamp, username, 0, c.GetInt("role"))
+	dates, err := model.GetFlowQuotaData(startTimestamp, endTimestamp, username, 0, c.GetInt("role"), enterpriseID)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -151,7 +194,7 @@ func GetUserFlowQuotaDates(c *gin.Context) {
 		})
 		return
 	}
-	dates, err := model.GetFlowQuotaData(startTimestamp, endTimestamp, "", userId, common.RoleCommonUser)
+	dates, err := model.GetFlowQuotaData(startTimestamp, endTimestamp, "", userId, common.RoleCommonUser, 0)
 	if err != nil {
 		common.ApiError(c, err)
 		return

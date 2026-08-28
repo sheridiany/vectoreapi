@@ -16,18 +16,27 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { createFileRoute, redirect } from '@tanstack/react-router'
+import { describe, expect, test } from 'vitest'
 
-import { dashboardSearchSchema } from '@/features/dashboard/search'
-import { DASHBOARD_DEFAULT_SECTION } from '@/features/dashboard/section-registry'
+import { dashboardSearchSchema } from '../search'
 
-export const Route = createFileRoute('/_authenticated/dashboard/')({
-  beforeLoad: ({ search }) => {
-    throw redirect({
-      to: '/dashboard/$section',
-      params: { section: DASHBOARD_DEFAULT_SECTION },
-      search,
+describe('dashboard enterprise search parameter', () => {
+  test('uses all enterprises only when the parameter is absent', () => {
+    expect(dashboardSearchSchema.parse({})).toEqual({})
+  })
+
+  test('accepts a positive integer enterprise id from a copied URL', () => {
+    expect(dashboardSearchSchema.parse({ enterprise_id: '23' })).toEqual({
+      enterprise_id: 23,
     })
-  },
-  validateSearch: dashboardSearchSchema,
+  })
+
+  test.each(['', '0', '-1', '1.5', 'not-a-number'])(
+    'rejects invalid enterprise id %s instead of broadening to all enterprises',
+    (enterpriseId) => {
+      expect(() =>
+        dashboardSearchSchema.parse({ enterprise_id: enterpriseId })
+      ).toThrow()
+    }
+  )
 })

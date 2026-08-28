@@ -87,7 +87,7 @@ func TestGetFlowQuotaDataUsesQuotaDataRoleSpecificDimensions(t *testing.T) {
 		TokenUsed: 999,
 	})
 
-	rootRows, err := GetFlowQuotaData(900, 2000, "", 0, common.RoleRootUser)
+	rootRows, err := GetFlowQuotaData(900, 2000, "", 0, common.RoleRootUser, 0)
 	require.NoError(t, err)
 	require.Len(t, rootRows, 3)
 	// Token 11 was soft-deleted, so its name is intentionally left empty for the
@@ -110,7 +110,7 @@ func TestGetFlowQuotaDataUsesQuotaDataRoleSpecificDimensions(t *testing.T) {
 	require.Equal(t, 22, rootRows[1].TokenID)
 	require.Equal(t, "backup", rootRows[1].TokenName)
 
-	adminRows, err := GetFlowQuotaData(900, 2000, "alice", 0, common.RoleAdminUser)
+	adminRows, err := GetFlowQuotaData(900, 2000, "alice", 0, common.RoleAdminUser, 0)
 	require.NoError(t, err)
 	require.Len(t, adminRows, 2)
 	require.Equal(t, 0, adminRows[0].TokenID)
@@ -121,7 +121,7 @@ func TestGetFlowQuotaDataUsesQuotaDataRoleSpecificDimensions(t *testing.T) {
 	require.Equal(t, "east", adminRows[0].ChannelName)
 	require.Equal(t, 150, adminRows[0].Quota)
 
-	selfRows, err := GetFlowQuotaData(900, 2000, "", 1, common.RoleCommonUser)
+	selfRows, err := GetFlowQuotaData(900, 2000, "", 1, common.RoleCommonUser, 999)
 	require.NoError(t, err)
 	require.Len(t, selfRows, 1)
 	require.Empty(t, selfRows[0].Username)
@@ -130,6 +130,26 @@ func TestGetFlowQuotaDataUsesQuotaDataRoleSpecificDimensions(t *testing.T) {
 	require.Empty(t, selfRows[0].TokenName)
 	require.Equal(t, "vip", selfRows[0].UseGroup)
 	require.Equal(t, 175, selfRows[0].Quota)
+}
+
+func TestGetFlowQuotaDataIntersectsEnterpriseUsernameAndTime(t *testing.T) {
+	truncateTables(t)
+	seedFlowLookupData(t)
+	for _, quotaData := range []QuotaData{
+		{UserID: 1, EnterpriseID: 11, Username: "alice", NodeName: "node-a", TokenID: 11, UseGroup: "vip", ModelName: "gpt-a", ChannelID: 1, CreatedAt: 1000, Count: 2, Quota: 100, TokenUsed: 40},
+		{UserID: 1, EnterpriseID: 12, Username: "alice", NodeName: "node-b", TokenID: 11, UseGroup: "vip", ModelName: "gpt-b", ChannelID: 1, CreatedAt: 1100, Count: 3, Quota: 70, TokenUsed: 30},
+		{UserID: 1, EnterpriseID: 11, Username: "alice", NodeName: "node-a", TokenID: 11, UseGroup: "vip", ModelName: "gpt-outside-time", ChannelID: 1, CreatedAt: 3000, Count: 9, Quota: 900, TokenUsed: 300},
+		{UserID: 2, EnterpriseID: 11, Username: "bob", NodeName: "node-c", TokenID: 22, UseGroup: "default", ModelName: "gpt-c", ChannelID: 2, CreatedAt: 1200, Count: 4, Quota: 80, TokenUsed: 20},
+	} {
+		seedFlowQuotaData(t, quotaData)
+	}
+
+	rows, err := GetFlowQuotaData(900, 2000, "alice", 0, common.RoleRootUser, 11)
+
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.Equal(t, "gpt-a", rows[0].ModelName)
+	require.Equal(t, 100, rows[0].Quota)
 }
 
 func TestLogQuotaDataSplitsRowsByUseGroupTokenChannelAndNode(t *testing.T) {

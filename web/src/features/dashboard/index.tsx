@@ -18,8 +18,17 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { getRouteApi, useNavigate } from '@tanstack/react-router'
 import { Eye, EyeOff } from 'lucide-react'
-import { useState, useCallback, useMemo, lazy, Suspense } from 'react'
+import {
+  useState,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  lazy,
+  Suspense,
+} from 'react'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 
 import { SectionPageLayout } from '@/components/layout'
 import { FadeIn } from '@/components/page-transition'
@@ -35,6 +44,7 @@ import { ROLE } from '@/lib/roles'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth-store'
 
+import { DashboardEnterpriseSelector } from './components/enterprise-selector'
 import { ModelsChartPreferences } from './components/models/models-chart-preferences'
 import { ModelsFilter } from './components/models/models-filter-dialog'
 import { OverviewDashboard } from './components/overview/overview-dashboard'
@@ -195,6 +205,7 @@ export function Dashboard() {
   const { t } = useTranslation()
   const navigate = useNavigate()
   const params = route.useParams()
+  const search = route.useSearch()
   const userRole = useAuthStore((state) => state.auth.user?.role)
   const activeSection = (params.section ??
     DASHBOARD_DEFAULT_SECTION) as DashboardSectionId
@@ -213,7 +224,6 @@ export function Dashboard() {
         timeGranularity: granularity,
         selectedRange: getDefaultDays(granularity),
         topUserLimit: 10,
-        enterpriseId: undefined,
       }
     }
   )
@@ -246,6 +256,38 @@ export function Dashboard() {
 
   const meta = SECTION_META[activeSection] ?? SECTION_META.overview
   const isAdmin = Boolean(userRole && userRole >= ROLE.ADMIN)
+  const isRoot = userRole === ROLE.SUPER_ADMIN
+  const enterpriseId = isRoot ? search.enterprise_id : undefined
+  const hasUnauthorizedEnterpriseScope =
+    search.enterprise_id !== undefined &&
+    userRole !== undefined &&
+    userRole !== ROLE.SUPER_ADMIN
+  useEffect(() => {
+    if (!hasUnauthorizedEnterpriseScope) return
+    toast.error(t('No permission to perform this action'))
+    void navigate({
+      to: '/dashboard/$section',
+      params: { section: activeSection },
+      search: { enterprise_id: undefined },
+      replace: true,
+    })
+  }, [
+    activeSection,
+    hasUnauthorizedEnterpriseScope,
+    navigate,
+    search.enterprise_id,
+    t,
+  ])
+  const previousEnterpriseIdRef = useRef(enterpriseId)
+  useEffect(() => {
+    if (previousEnterpriseIdRef.current === enterpriseId) return
+    previousEnterpriseIdRef.current = enterpriseId
+    setModelFilters((current) =>
+      current.username ? { ...current, username: undefined } : current
+    )
+    setModelData([])
+    setDataLoading(true)
+  }, [enterpriseId])
   const visibleSections = useMemo(
     () =>
       DASHBOARD_SECTION_IDS.filter(
@@ -258,9 +300,20 @@ export function Dashboard() {
       void navigate({
         to: '/dashboard/$section',
         params: { section: section as DashboardSectionId },
+        search: { enterprise_id: enterpriseId },
       })
     },
-    [navigate]
+    [enterpriseId, navigate]
+  )
+  const handleEnterpriseChange = useCallback(
+    (nextEnterpriseId?: number) => {
+      void navigate({
+        to: '/dashboard/$section',
+        params: { section: activeSection },
+        search: { enterprise_id: nextEnterpriseId },
+      })
+    },
+    [activeSection, navigate]
   )
   const showSectionTabs =
     activeSection !== 'overview' && visibleSections.length > 1
@@ -316,7 +369,22 @@ export function Dashboard() {
         />
       </>
     ) : null
-  const sectionActions = modelActions ?? flowActions
+  const sectionSpecificActions = modelActions ?? flowActions
+  const showEnterpriseSelector = isRoot && activeSection !== 'overview'
+  const sectionActions =
+    showEnterpriseSelector || sectionSpecificActions != null ? (
+      <>
+        {showEnterpriseSelector && (
+          <DashboardEnterpriseSelector
+            enterpriseId={enterpriseId}
+            onChange={handleEnterpriseChange}
+          />
+        )}
+        {sectionSpecificActions}
+      </>
+    ) : null
+
+  if (search.enterprise_id !== undefined && !isRoot) return null
 
   return (
     <SectionPageLayout>
@@ -339,7 +407,7 @@ export function Dashboard() {
                 <div />
               )}
               {sectionActions != null && (
-                <div className='flex shrink-0 flex-wrap items-center gap-1.5 sm:gap-2'>
+                <div className='flex max-w-full shrink-0 flex-wrap items-center gap-1.5 sm:gap-2'>
                   {sectionActions}
                 </div>
               )}
@@ -352,6 +420,7 @@ export function Dashboard() {
                 <Suspense fallback={<LogStatCardsFallback />}>
                   <LazyLogStatCards
                     filters={modelFilters}
+                    enterpriseId={enterpriseId}
                     onDataUpdate={handleDataUpdate}
                   />
                 </Suspense>
@@ -359,7 +428,7 @@ export function Dashboard() {
               {isAdmin && (
                 <FadeIn delay={0.05}>
                   <Suspense fallback={<PerformanceOverviewFallback />}>
-                    <LazyPerformanceOverview />
+                    <LazyPerformanceOverview enterpriseId={enterpriseId} />
                   </Suspense>
                 </FadeIn>
               )}
@@ -396,6 +465,7 @@ export function Dashboard() {
               <Suspense fallback={<ModelChartsFallback />}>
                 <LazyUserCharts
                   filters={userChartsFilters}
+                  enterpriseId={enterpriseId}
                   onFiltersChange={setUserChartsFilters}
                 />
               </Suspense>
@@ -405,7 +475,9 @@ export function Dashboard() {
             <FadeIn>
               <Suspense fallback={<ModelChartsFallback />}>
                 <LazyFlowCharts
+                  key={enterpriseId ?? 'all'}
                   filters={modelFilters}
+                  enterpriseId={enterpriseId}
                   sensitiveVisible={flowSensitiveVisible}
                 />
               </Suspense>

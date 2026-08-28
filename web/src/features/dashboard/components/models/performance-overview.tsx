@@ -23,7 +23,7 @@ import { useTranslation } from 'react-i18next'
 
 import { IconBadge, type IconBadgeTone } from '@/components/ui/icon-badge'
 import { Skeleton } from '@/components/ui/skeleton'
-import { getPerfMetricsSummary } from '@/features/performance-metrics/api'
+import { getDashboardPerfMetricsSummary } from '@/features/dashboard/api'
 import {
   formatLatency,
   formatThroughput,
@@ -83,11 +83,20 @@ function buildPerformanceSummary(rows: PerfModelSummary[]): PerformanceSummary {
   }
 }
 
-export function PerformanceOverview() {
+export function PerformanceOverview(props: { enterpriseId?: number }) {
   const { t } = useTranslation()
   const metricsQuery = useQuery({
-    queryKey: ['perf-metrics-summary', PERFORMANCE_WINDOW_HOURS],
-    queryFn: () => getPerfMetricsSummary(PERFORMANCE_WINDOW_HOURS),
+    queryKey: [
+      'dashboard',
+      'performance',
+      PERFORMANCE_WINDOW_HOURS,
+      props.enterpriseId ?? 'all',
+    ],
+    queryFn: () =>
+      getDashboardPerfMetricsSummary(
+        PERFORMANCE_WINDOW_HOURS,
+        props.enterpriseId
+      ),
     staleTime: 60 * 1000,
     retry: false,
   })
