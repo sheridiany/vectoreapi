@@ -863,6 +863,56 @@ func TestControlPlaneSyncCreatesPublicCapabilityWithoutExposingToolName(t *testi
 	assert.Equal(t, "private/search_news", bindings[0].ToolName)
 }
 
+func TestControlPlaneSyncAcceptsAgentKeyDescribeToolContract(t *testing.T) {
+	openRuntimeTestDB(t)
+	connector := &runtimeFakeConnector{
+		findResult: map[string]any{"content": []any{map[string]any{
+			"type": "text",
+			"text": `[{"name":"Firecrawl/scrape","summary":"Scrape a webpage","cost":{"credits_per_call":0.2}}]`,
+		}}},
+		describeResult: map[string]any{"content": []any{map[string]any{
+			"type": "text",
+			"text": `{
+				"name":"Firecrawl/scrape",
+				"description":"Fresh upstream description",
+				"cost":{"credits_per_call":0.2,"usd_per_call":0.004},
+				"execute_as":{"name":"Firecrawl/scrape","params":{"url":"<The URL to scrape.>"}},
+				"params":{"type":"object","required":["url"],"properties":{"url":{"type":"string","format":"uri"}}}
+			}`,
+		}}},
+	}
+	control := NewControlPlane(func(*model.SearchUpstreamAccount, string) (UpstreamConnector, error) {
+		return connector, nil
+	})
+	_, err := control.SaveAccount(context.Background(), AccountCommand{Name: "primary", Secret: "ak_live_official_contract", Status: "healthy"})
+	require.NoError(t, err)
+
+	result, err := control.SyncCatalog(context.Background(), SyncCommand{Queries: []string{"scrape a webpage"}})
+	require.NoError(t, err)
+	assert.Empty(t, result.Failures)
+	assert.Equal(t, 1, result.Synced)
+
+	capabilities, err := model.ListSearchCapabilities(true)
+	require.NoError(t, err)
+	require.Len(t, capabilities, 1)
+	capability := capabilities[0]
+	assert.Equal(t, "Fresh upstream description", capability.Description)
+	assert.Equal(t, model.SearchCapabilitySchemaAvailable, capability.SchemaStatus)
+	assert.JSONEq(t, `{
+		"type":"object",
+		"required":["url"],
+		"properties":{"url":{"type":"string","format":"uri"}}
+	}`, capability.InputSchema)
+	assert.Equal(t, int64(200_000), capability.UpstreamCostMicros)
+	assert.Equal(t, int64(200_000), capability.PriceMicros)
+
+	bindings, err := model.ListSearchCapabilityBindings(capability.Id, true)
+	require.NoError(t, err)
+	require.Len(t, bindings, 1)
+	assert.Equal(t, capability.InputSchema, bindings[0].InputSchema)
+	assert.Equal(t, int64(200_000), bindings[0].UpstreamCostMicros)
+}
+
 func TestControlPlaneSyncIgnoresNamedSchemaProperties(t *testing.T) {
 	openRuntimeTestDB(t)
 	connector := &runtimeFakeConnector{

@@ -604,7 +604,7 @@ func extractInputSchema(value map[string]any) map[string]any {
 }
 
 func extractInputSchemaCandidate(value map[string]any) (map[string]any, bool) {
-	for _, key := range []string{"inputSchema", "input_schema", "schema", "parametersSchema"} {
+	for _, key := range []string{"inputSchema", "input_schema", "schema", "parametersSchema", "params"} {
 		raw, exists := value[key]
 		if !exists {
 			continue
@@ -782,7 +782,7 @@ func firstNumber(value map[string]any, keys ...string) float64 {
 				return result
 			}
 		case map[string]any:
-			if result := firstNumber(typed, "amount", "value", "credits", "remaining", "balance"); result != 0 {
+			if result := firstNumber(typed, "credits_per_call", "amount", "value", "credits", "remaining", "balance"); result != 0 {
 				return result
 			}
 		}
