@@ -9,6 +9,7 @@ the Free Software Foundation, either version 3 of the License, or
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { AxiosError } from 'axios'
 import type { ReactNode } from 'react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
@@ -33,6 +34,9 @@ import {
   updateSearchCapabilityEnterpriseGrants,
 } from '../api'
 
+const toastError = vi.hoisted(() => vi.fn())
+const handleServerError = vi.hoisted(() => vi.fn())
+
 vi.mock('../api', () => ({
   createSearchUpstreamAccount: vi.fn(),
   deleteSearchUpstreamAccount: vi.fn(),
@@ -53,6 +57,18 @@ vi.mock('../api', () => ({
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
+}))
+
+vi.mock('sonner', () => ({
+  toast: {
+    error: toastError,
+    success: vi.fn(),
+    warning: vi.fn(),
+  },
+}))
+
+vi.mock('@/lib/handle-server-error', () => ({
+  handleServerError,
 }))
 
 function renderWithQuery(ui: ReactNode) {
@@ -152,6 +168,9 @@ describe('vSearch administration pages', () => {
     ])
     vi.mocked(syncAdminSearchCatalog).mockResolvedValue({
       synced: 2,
+      published: 2,
+      skipped: 0,
+      failures: [],
       synced_service_ids: ['vr_svc_brave', 'vr_svc_firecrawl'],
     })
     vi.mocked(publishAdminSearchCatalog).mockResolvedValue({
@@ -465,7 +484,7 @@ describe('vSearch administration pages', () => {
     expect(screen.queryByText('Brave Search')).not.toBeInTheDocument()
   })
 
-  test('confirms and publishes only capabilities returned by the latest sync', async () => {
+  test('synchronizes without requiring a second publish action', async () => {
     const user = userEvent.setup()
     renderWithQuery(<SearchAdminCatalogPage />)
 
@@ -477,26 +496,44 @@ describe('vSearch administration pages', () => {
     ).not.toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: 'Sync catalog' }))
-    const publishButton = await screen.findByRole('button', {
-      name: 'Publish synchronized capabilities',
-    })
-    await user.click(publishButton)
-
+    await waitFor(() => expect(syncAdminSearchCatalog).toHaveBeenCalledOnce())
     expect(
-      await screen.findByRole('heading', { name: 'Publish capabilities?' })
-    ).toBeVisible()
-    await user.click(
-      screen.getByRole('button', { name: 'Publish capabilities' })
-    )
-
-    await waitFor(() =>
-      expect(
-        vi.mocked(publishAdminSearchCatalog).mock.calls.at(-1)?.[0]
-      ).toEqual({
-        service_ids: ['vr_svc_brave', 'vr_svc_firecrawl'],
-        access_mode: 'all_enterprises',
+      screen.queryByRole('button', {
+        name: 'Publish synchronized capabilities',
       })
+    ).not.toBeInTheDocument()
+    expect(publishAdminSearchCatalog).not.toHaveBeenCalled()
+  })
+
+  test('shows one actionable error when catalog synchronization fails', async () => {
+    vi.mocked(syncAdminSearchCatalog).mockRejectedValueOnce(
+      new Error('Connect and health-check an AgentKey account first.')
     )
+    renderWithQuery(<SearchAdminCatalogPage />)
+
+    await screen.findAllByText('Brave Search')
+    await userEvent.click(screen.getByRole('button', { name: 'Sync catalog' }))
+
+    await waitFor(() => expect(toastError).toHaveBeenCalledOnce())
+    expect(toastError).toHaveBeenCalledWith(
+      'Connect and health-check an AgentKey account first.'
+    )
+  })
+
+  test('routes an HTTP 429 through the localized server error handler once', async () => {
+    const rateLimitError = Object.assign(
+      new AxiosError('Request failed with status code 429'),
+      { response: { status: 429, data: '' } }
+    )
+    vi.mocked(syncAdminSearchCatalog).mockRejectedValueOnce(rateLimitError)
+    renderWithQuery(<SearchAdminCatalogPage />)
+
+    await screen.findAllByText('Brave Search')
+    await userEvent.click(screen.getByRole('button', { name: 'Sync catalog' }))
+
+    await waitFor(() => expect(handleServerError).toHaveBeenCalledOnce())
+    expect(handleServerError).toHaveBeenCalledWith(rateLimitError)
+    expect(toastError).not.toHaveBeenCalled()
   })
 
   test('labels schema-unavailable capabilities and prevents enabling them', async () => {

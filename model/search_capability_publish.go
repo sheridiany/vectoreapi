@@ -9,10 +9,13 @@ import (
 )
 
 type SearchCapabilityPublishConfig struct {
-	ID                   int
-	PriceMicros          int64
-	ExpectedInputSchema  string
-	ExpectedSchemaStatus int
+	ID                         int
+	PriceMicros                int64
+	ExpectedInputSchema        string
+	ExpectedSchemaStatus       int
+	ExpectedAvailabilitySource *int
+	ResultAvailabilitySource   *int
+	AllowedBindingIDs          []int
 }
 
 var ErrSearchCapabilityPublishStateChanged = errors.New("search capability publish state changed")
@@ -33,8 +36,19 @@ func PublishSearchCapabilities(configs []SearchCapabilityPublishConfig, clearGra
 	ids := make([]int, 0, len(configs))
 	seen := make(map[int]struct{}, len(configs))
 	for _, config := range configs {
-		if config.ID <= 0 || config.PriceMicros < 0 || config.ExpectedSchemaStatus != SearchCapabilitySchemaAvailable {
+		if config.ID <= 0 || config.PriceMicros < 0 || config.ExpectedSchemaStatus != SearchCapabilitySchemaAvailable || len(config.AllowedBindingIDs) == 0 {
 			return errors.New("search capability publish configuration is invalid")
+		}
+		for _, bindingID := range config.AllowedBindingIDs {
+			if bindingID <= 0 {
+				return errors.New("search capability publish binding is invalid")
+			}
+		}
+		if config.ExpectedAvailabilitySource != nil && !validSearchCapabilityAvailabilitySource(*config.ExpectedAvailabilitySource) {
+			return errors.New("search capability availability source is invalid")
+		}
+		if config.ResultAvailabilitySource != nil && !validSearchCapabilityAvailabilitySource(*config.ResultAvailabilitySource) {
+			return errors.New("search capability result availability source is invalid")
 		}
 		if _, exists := seen[config.ID]; exists {
 			return errors.New("search capability publish configuration is duplicated")
@@ -52,13 +66,14 @@ func PublishSearchCapabilities(configs []SearchCapabilityPublishConfig, clearGra
 			if err := lockForUpdate(tx).Where("id = ?", config.ID).First(&capability).Error; err != nil {
 				return err
 			}
-			if capability.SchemaStatus != config.ExpectedSchemaStatus || capability.InputSchema != config.ExpectedInputSchema {
+			if capability.SchemaStatus != config.ExpectedSchemaStatus || capability.InputSchema != config.ExpectedInputSchema ||
+				(config.ExpectedAvailabilitySource != nil && capability.AvailabilitySource != *config.ExpectedAvailabilitySource) {
 				return ErrSearchCapabilityPublishStateChanged
 			}
 
 			bindings := make([]SearchCapabilityBinding, 0)
 			if err := lockForUpdate(tx).
-				Where("capability_id = ? AND status = ?", config.ID, SearchCapabilityBindingStatusEnabled).
+				Where("capability_id = ? AND status = ? AND id IN ?", config.ID, SearchCapabilityBindingStatusEnabled, config.AllowedBindingIDs).
 				Order("priority asc, weight desc, id asc").Find(&bindings).Error; err != nil {
 				return err
 			}
@@ -103,9 +118,6 @@ func PublishSearchCapabilities(configs []SearchCapabilityPublishConfig, clearGra
 			if capability.PriceMicros > priceFloor {
 				priceFloor = capability.PriceMicros
 			}
-			if capability.UpstreamCostMicros > priceFloor {
-				priceFloor = capability.UpstreamCostMicros
-			}
 			healthyRoute := false
 			for _, binding := range bindings {
 				account, accountExists := accountsByID[binding.UpstreamAccountID]
@@ -135,23 +147,38 @@ func PublishSearchCapabilities(configs []SearchCapabilityPublishConfig, clearGra
 		}
 		now := common.GetTimestamp()
 		for _, config := range lockedConfigs {
-			result := tx.Model(&SearchCapability{}).Where("id = ?", config.ID).Updates(map[string]any{
+			update := tx.Model(&SearchCapability{}).Where("id = ?", config.ID)
+			if config.ExpectedAvailabilitySource != nil {
+				update = update.Where("availability_source = ?", *config.ExpectedAvailabilitySource)
+			}
+			updates := map[string]any{
 				"status": SearchCapabilityStatusEnabled,
 				"price_micros": gorm.Expr(
 					"CASE WHEN price_micros < ? THEN ? ELSE price_micros END",
 					config.PriceMicros, config.PriceMicros,
 				),
 				"updated_at": now,
-			})
+			}
+			if config.ResultAvailabilitySource != nil {
+				updates["availability_source"] = *config.ResultAvailabilitySource
+			}
+			result := update.Updates(updates)
 			if result.Error != nil {
 				return result.Error
 			}
 			if result.RowsAffected == 0 {
 				var count int64
-				if err := tx.Model(&SearchCapability{}).Where("id = ?", config.ID).Count(&count).Error; err != nil {
+				query := tx.Model(&SearchCapability{}).Where("id = ?", config.ID)
+				if config.ExpectedAvailabilitySource != nil {
+					query = query.Where("availability_source = ?", *config.ExpectedAvailabilitySource)
+				}
+				if err := query.Count(&count).Error; err != nil {
 					return err
 				}
 				if count == 0 {
+					if config.ExpectedAvailabilitySource != nil {
+						return ErrSearchCapabilityPublishStateChanged
+					}
 					return gorm.ErrRecordNotFound
 				}
 			}

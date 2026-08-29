@@ -50,11 +50,26 @@ function serverErrorPayload(value: unknown): Record<string, unknown> | null {
 
 export function getServerErrorMessageKey(value: unknown): string | null {
   const payload = serverErrorPayload(value)
-  if (!payload || typeof payload.code !== 'string') return null
+  if (payload && typeof payload.code === 'string') {
+    const messageKey =
+      serverErrorMessageKeys[
+        payload.code as keyof typeof serverErrorMessageKeys
+      ] ?? null
+    if (messageKey) return messageKey
+  }
 
-  return (
-    serverErrorMessageKeys[
-      payload.code as keyof typeof serverErrorMessageKeys
-    ] ?? null
-  )
+  if (isRecord(value)) {
+    const response = value.response
+    if (isRecord(response) && Number(response.status) === 429) {
+      const data = response.data
+      if (
+        !isRecord(data) ||
+        typeof data.message !== 'string' ||
+        !data.message.trim()
+      ) {
+        return 'Too many requests'
+      }
+    }
+  }
+  return null
 }

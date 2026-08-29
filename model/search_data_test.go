@@ -14,6 +14,26 @@ import (
 	"gorm.io/gorm"
 )
 
+type legacySearchCapabilityAvailabilityMigrationFixture struct {
+	Id                 int    `gorm:"primaryKey;autoIncrement"`
+	PublicID           string `gorm:"type:varchar(32);uniqueIndex"`
+	Name               string `gorm:"type:varchar(128);not null"`
+	Category           string `gorm:"type:varchar(64);not null"`
+	Description        string `gorm:"type:text"`
+	InputSchema        string `gorm:"type:text"`
+	SchemaStatus       int    `gorm:"type:int;not null"`
+	Status             int    `gorm:"type:int;not null;index"`
+	UpstreamCostMicros int64  `gorm:"not null"`
+	PriceMicros        int64  `gorm:"not null"`
+	LastSyncedAt       int64  `gorm:"index"`
+	CreatedAt          int64
+	UpdatedAt          int64
+}
+
+func (legacySearchCapabilityAvailabilityMigrationFixture) TableName() string {
+	return "search_capabilities"
+}
+
 func openSearchDataTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	previousMainDatabaseType := common.MainDatabaseType()
@@ -216,6 +236,25 @@ func TestSearchCapabilityPriceFloorIgnoresEnabledBindingWithMismatchedSchema(t *
 	require.NoError(t, err)
 	assert.Equal(t, int64(200), stored.UpstreamCostMicros)
 	assert.Equal(t, int64(200), stored.PriceMicros)
+}
+
+func TestSearchCapabilityAutoMigrationPreservesLegacyAvailabilityState(t *testing.T) {
+	db := openSearchDataTestDB(t)
+	require.NoError(t, db.Migrator().DropTable(&SearchCapabilityGrant{}, &SearchCapabilityBinding{}, &SearchCapability{}))
+	require.NoError(t, db.AutoMigrate(&legacySearchCapabilityAvailabilityMigrationFixture{}))
+	require.NoError(t, db.Create(&legacySearchCapabilityAvailabilityMigrationFixture{
+		PublicID: "vr_svc_legacy0000001", Name: "Legacy", Category: "搜索", Description: "legacy",
+		InputSchema: `{"type":"object"}`, SchemaStatus: SearchCapabilitySchemaAvailable,
+		Status: SearchCapabilityStatusDisabled, UpstreamCostMicros: 100, PriceMicros: 250,
+		LastSyncedAt: 1, CreatedAt: 1, UpdatedAt: 1,
+	}).Error)
+
+	require.NoError(t, db.AutoMigrate(&SearchCapability{}))
+	var stored SearchCapability
+	require.NoError(t, db.Where("public_id = ?", "vr_svc_legacy0000001").First(&stored).Error)
+	assert.Equal(t, SearchCapabilityAvailabilityLegacyPreserved, stored.AvailabilitySource)
+	assert.Equal(t, SearchCapabilityStatusDisabled, stored.Status)
+	assert.Equal(t, int64(250), stored.PriceMicros)
 }
 
 func TestRefreshSearchCapabilityPriceFloorReadsAndUpdatesInOneTransaction(t *testing.T) {

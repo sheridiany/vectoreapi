@@ -7,30 +7,19 @@ the Free Software Foundation, either version 3 of the License, or
 (at your option) any later version.
 */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { AxiosError } from 'axios'
 import {
   BookOpen,
   Building2,
   CircleAlert,
   RefreshCw,
   Search,
-  Upload,
 } from 'lucide-react'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
 import { StatusBadge } from '@/components/status-badge'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -67,7 +56,6 @@ import {
   fetchAdminSearchCatalog,
   fetchSearchCapabilityEnterpriseGrants,
   fetchSearchGrantEnterprises,
-  publishAdminSearchCatalog,
   syncAdminSearchCatalog,
   updateAdminSearchCatalogItem,
   updateSearchCapabilityEnterpriseGrants,
@@ -89,8 +77,6 @@ export function SearchAdminCatalogPage() {
   const queryClient = useQueryClient()
   const [query, setQuery] = useState('')
   const [category, setCategory] = useState(ALL_CATEGORIES)
-  const [lastSyncedServiceIDs, setLastSyncedServiceIDs] = useState<string[]>([])
-  const [publishDialogOpen, setPublishDialogOpen] = useState(false)
   const catalogQuery = useQuery({
     queryKey: ['search-admin-catalog'],
     queryFn: fetchAdminSearchCatalog,
@@ -98,32 +84,29 @@ export function SearchAdminCatalogPage() {
   const syncMutation = useMutation({
     mutationFn: syncAdminSearchCatalog,
     onSuccess: (result) => {
-      setLastSyncedServiceIDs(result.synced_service_ids)
-      toast.success(
-        t('{{count}} capabilities synchronized', { count: result.synced })
-      )
-      void queryClient.invalidateQueries({
-        queryKey: ['search-admin-catalog'],
-      })
-    },
-    onError: handleServerError,
-  })
-  const publishMutation = useMutation({
-    mutationFn: publishAdminSearchCatalog,
-    onSuccess: (result) => {
-      toast.success(
-        t('{{published}} capabilities published; {{skipped}} skipped', {
+      const message = t(
+        '{{published}} capabilities published; {{skipped}} skipped',
+        {
           published: result.published,
           skipped: result.skipped,
-        })
+        }
       )
-      setLastSyncedServiceIDs([])
-      setPublishDialogOpen(false)
+      if (result.failures.length > 0) {
+        toast.warning(message, { description: result.failures.join('；') })
+      } else {
+        toast.success(message)
+      }
       void queryClient.invalidateQueries({
         queryKey: ['search-admin-catalog'],
       })
     },
-    onError: handleServerError,
+    onError: (error) => {
+      if (error instanceof AxiosError) {
+        handleServerError(error)
+        return
+      }
+      toast.error(error instanceof Error ? error.message : t('Request failed'))
+    },
   })
   const updateMutation = useMutation({
     mutationFn: ({
@@ -139,7 +122,13 @@ export function SearchAdminCatalogPage() {
         queryKey: ['search-admin-catalog'],
       })
     },
-    onError: handleServerError,
+    onError: (error) => {
+      if (error instanceof AxiosError) {
+        handleServerError(error)
+        return
+      }
+      toast.error(error instanceof Error ? error.message : t('Request failed'))
+    },
   })
 
   const catalog = catalogQuery.data || EMPTY_CATALOG
@@ -244,70 +233,17 @@ export function SearchAdminCatalogPage() {
         'Synchronize the upstream tool catalog, control availability, and set the price exposed to users.'
       )}
       action={
-        <div className='flex flex-wrap items-center justify-end gap-2'>
-          {lastSyncedServiceIDs.length > 0 && (
-            <AlertDialog
-              open={publishDialogOpen}
-              onOpenChange={(open) => {
-                if (!publishMutation.isPending) setPublishDialogOpen(open)
-              }}
-            >
-              <AlertDialogTrigger
-                render={<Button variant='outline' />}
-                disabled={syncMutation.isPending || publishMutation.isPending}
-              >
-                <Upload data-icon='inline-start' aria-hidden='true' />
-                {t('Publish synchronized capabilities')}
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>
-                    {t('Publish capabilities?')}
-                  </AlertDialogTitle>
-                  <AlertDialogDescription>
-                    {t(
-                      'Only the {{count}} capabilities returned by the latest synchronization with valid parameter schemas and healthy routes will be published to all enterprises.',
-                      { count: lastSyncedServiceIDs.length }
-                    )}
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel disabled={publishMutation.isPending}>
-                    {t('Cancel')}
-                  </AlertDialogCancel>
-                  <AlertDialogAction
-                    disabled={publishMutation.isPending}
-                    onClick={() => {
-                      if (lastSyncedServiceIDs.length === 0) return
-                      publishMutation.mutate({
-                        service_ids: lastSyncedServiceIDs,
-                        access_mode: 'all_enterprises',
-                      })
-                    }}
-                  >
-                    {publishMutation.isPending
-                      ? t('Publishing…')
-                      : t('Publish capabilities')}
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
-          )}
-          <Button
-            onClick={() => {
-              setLastSyncedServiceIDs([])
-              syncMutation.mutate()
-            }}
-            disabled={syncMutation.isPending || publishMutation.isPending}
-          >
-            <RefreshCw
-              data-icon='inline-start'
-              className={syncMutation.isPending ? 'animate-spin' : undefined}
-              aria-hidden='true'
-            />
-            {syncMutation.isPending ? t('Synchronizing…') : t('Sync catalog')}
-          </Button>
-        </div>
+        <Button
+          onClick={() => syncMutation.mutate()}
+          disabled={syncMutation.isPending}
+        >
+          <RefreshCw
+            data-icon='inline-start'
+            className={syncMutation.isPending ? 'animate-spin' : undefined}
+            aria-hidden='true'
+          />
+          {syncMutation.isPending ? t('Synchronizing…') : t('Sync catalog')}
+        </Button>
       }
     >
       <div className='grid gap-3 sm:grid-cols-2 xl:grid-cols-4'>
