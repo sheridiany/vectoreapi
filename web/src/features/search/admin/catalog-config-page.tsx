@@ -13,12 +13,24 @@ import {
   CircleAlert,
   RefreshCw,
   Search,
+  Upload,
 } from 'lucide-react'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
 import { StatusBadge } from '@/components/status-badge'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -55,6 +67,7 @@ import {
   fetchAdminSearchCatalog,
   fetchSearchCapabilityEnterpriseGrants,
   fetchSearchGrantEnterprises,
+  publishAdminSearchCatalog,
   syncAdminSearchCatalog,
   updateAdminSearchCatalogItem,
   updateSearchCapabilityEnterpriseGrants,
@@ -76,6 +89,8 @@ export function SearchAdminCatalogPage() {
   const queryClient = useQueryClient()
   const [query, setQuery] = useState('')
   const [category, setCategory] = useState(ALL_CATEGORIES)
+  const [lastSyncedServiceIDs, setLastSyncedServiceIDs] = useState<string[]>([])
+  const [publishDialogOpen, setPublishDialogOpen] = useState(false)
   const catalogQuery = useQuery({
     queryKey: ['search-admin-catalog'],
     queryFn: fetchAdminSearchCatalog,
@@ -83,9 +98,27 @@ export function SearchAdminCatalogPage() {
   const syncMutation = useMutation({
     mutationFn: syncAdminSearchCatalog,
     onSuccess: (result) => {
+      setLastSyncedServiceIDs(result.synced_service_ids)
       toast.success(
         t('{{count}} capabilities synchronized', { count: result.synced })
       )
+      void queryClient.invalidateQueries({
+        queryKey: ['search-admin-catalog'],
+      })
+    },
+    onError: handleServerError,
+  })
+  const publishMutation = useMutation({
+    mutationFn: publishAdminSearchCatalog,
+    onSuccess: (result) => {
+      toast.success(
+        t('{{published}} capabilities published; {{skipped}} skipped', {
+          published: result.published,
+          skipped: result.skipped,
+        })
+      )
+      setLastSyncedServiceIDs([])
+      setPublishDialogOpen(false)
       void queryClient.invalidateQueries({
         queryKey: ['search-admin-catalog'],
       })
@@ -211,17 +244,70 @@ export function SearchAdminCatalogPage() {
         'Synchronize the upstream tool catalog, control availability, and set the price exposed to users.'
       )}
       action={
-        <Button
-          onClick={() => syncMutation.mutate()}
-          disabled={syncMutation.isPending}
-        >
-          <RefreshCw
-            data-icon='inline-start'
-            className={syncMutation.isPending ? 'animate-spin' : undefined}
-            aria-hidden='true'
-          />
-          {syncMutation.isPending ? t('Synchronizing…') : t('Sync catalog')}
-        </Button>
+        <div className='flex flex-wrap items-center justify-end gap-2'>
+          {lastSyncedServiceIDs.length > 0 && (
+            <AlertDialog
+              open={publishDialogOpen}
+              onOpenChange={(open) => {
+                if (!publishMutation.isPending) setPublishDialogOpen(open)
+              }}
+            >
+              <AlertDialogTrigger
+                render={<Button variant='outline' />}
+                disabled={syncMutation.isPending || publishMutation.isPending}
+              >
+                <Upload data-icon='inline-start' aria-hidden='true' />
+                {t('Publish synchronized capabilities')}
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>
+                    {t('Publish capabilities?')}
+                  </AlertDialogTitle>
+                  <AlertDialogDescription>
+                    {t(
+                      'Only the {{count}} capabilities returned by the latest synchronization with valid parameter schemas and healthy routes will be published to all enterprises.',
+                      { count: lastSyncedServiceIDs.length }
+                    )}
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel disabled={publishMutation.isPending}>
+                    {t('Cancel')}
+                  </AlertDialogCancel>
+                  <AlertDialogAction
+                    disabled={publishMutation.isPending}
+                    onClick={() => {
+                      if (lastSyncedServiceIDs.length === 0) return
+                      publishMutation.mutate({
+                        service_ids: lastSyncedServiceIDs,
+                        access_mode: 'all_enterprises',
+                      })
+                    }}
+                  >
+                    {publishMutation.isPending
+                      ? t('Publishing…')
+                      : t('Publish capabilities')}
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          )}
+          <Button
+            onClick={() => {
+              setLastSyncedServiceIDs([])
+              syncMutation.mutate()
+            }}
+            disabled={syncMutation.isPending || publishMutation.isPending}
+          >
+            <RefreshCw
+              data-icon='inline-start'
+              className={syncMutation.isPending ? 'animate-spin' : undefined}
+              aria-hidden='true'
+            />
+            {syncMutation.isPending ? t('Synchronizing…') : t('Sync catalog')}
+          </Button>
+        </div>
       }
     >
       <div className='grid gap-3 sm:grid-cols-2 xl:grid-cols-4'>
@@ -369,13 +455,16 @@ function CatalogTable(props: {
                 <Switch
                   aria-label={props.t('Enable {{name}}', { name: item.name })}
                   checked={item.enabled}
-                  disabled={props.pendingId !== null}
+                  disabled={
+                    props.pendingId !== null ||
+                    item.schema_status === 'unavailable'
+                  }
                   onCheckedChange={(enabled) =>
                     props.onUpdate(item.id, { enabled })
                   }
                 />
                 <span className='text-muted-foreground text-xs'>
-                  {item.enabled ? props.t('Enabled') : props.t('Disabled')}
+                  {catalogAvailabilityLabel(item, props.t)}
                 </span>
               </div>
             </TableCell>
@@ -405,10 +494,19 @@ function CatalogCard(props: {
         <Switch
           aria-label={t('Enable {{name}}', { name: item.name })}
           checked={item.enabled}
-          disabled={props.pending}
+          disabled={props.pending || props.item.schema_status === 'unavailable'}
           onCheckedChange={(enabled) => props.onUpdate({ enabled })}
         />
       </div>
+      <p
+        className={
+          item.schema_status === 'unavailable'
+            ? 'text-destructive text-xs font-medium'
+            : 'text-muted-foreground text-xs'
+        }
+      >
+        {catalogAvailabilityLabel(item, t)}
+      </p>
       <p className='text-muted-foreground text-sm leading-6'>
         {item.description}
       </p>
@@ -636,6 +734,16 @@ function CatalogMetric(props: { label: string; value: string }) {
       </CardContent>
     </Card>
   )
+}
+
+function catalogAvailabilityLabel(
+  item: SearchAdminCatalogItem,
+  t: (key: string, options?: Record<string, unknown>) => string
+) {
+  if (item.schema_status === 'unavailable') {
+    return t('Parameter schema unavailable')
+  }
+  return item.enabled ? t('Enabled') : t('Disabled')
 }
 
 function CategoryButton(props: {

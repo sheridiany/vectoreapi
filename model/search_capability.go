@@ -185,6 +185,77 @@ func ConfigureSearchCapability(id, status int, priceMicros int64) error {
 	return searchUpdateError(result, &SearchCapability{}, id)
 }
 
+func RefreshSearchCapabilityPriceFloor(id int) error {
+	if id <= 0 {
+		return errors.New("search capability id is invalid")
+	}
+	return DB.Transaction(func(tx *gorm.DB) error {
+		priceFloor, err := searchCapabilityPriceFloor(tx, id, true)
+		if err != nil {
+			return err
+		}
+		result := tx.Model(&SearchCapability{}).Where("id = ?", id).Updates(map[string]any{
+			"upstream_cost_micros": priceFloor,
+			"price_micros": gorm.Expr(
+				"CASE WHEN price_micros < ? THEN ? ELSE price_micros END",
+				priceFloor, priceFloor,
+			),
+			"updated_at": common.GetTimestamp(),
+		})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected > 0 {
+			return nil
+		}
+		var count int64
+		if err := tx.Model(&SearchCapability{}).Where("id = ?", id).Count(&count).Error; err != nil {
+			return err
+		}
+		if count == 0 {
+			return gorm.ErrRecordNotFound
+		}
+		return nil
+	})
+}
+
+func GetSearchCapabilityPriceFloor(id int) (int64, error) {
+	if id <= 0 {
+		return 0, errors.New("search capability id is invalid")
+	}
+	return searchCapabilityPriceFloor(DB, id, false)
+}
+
+func searchCapabilityPriceFloor(tx *gorm.DB, id int, lockRows bool) (int64, error) {
+	capability := SearchCapability{}
+	capabilityQuery := tx.Select("id", "input_schema").Where("id = ?", id)
+	if lockRows {
+		capabilityQuery = lockForUpdate(capabilityQuery)
+	}
+	if err := capabilityQuery.First(&capability).Error; err != nil {
+		return 0, err
+	}
+
+	bindings := make([]SearchCapabilityBinding, 0)
+	bindingQuery := tx.Select("id", "input_schema", "upstream_cost_micros").
+		Where("capability_id = ? AND status = ?", id, SearchCapabilityBindingStatusEnabled).
+		Order("id asc")
+	if lockRows {
+		bindingQuery = lockForUpdate(bindingQuery)
+	}
+	if err := bindingQuery.Find(&bindings).Error; err != nil {
+		return 0, err
+	}
+
+	var priceFloor int64
+	for _, binding := range bindings {
+		if binding.InputSchema == capability.InputSchema && binding.UpstreamCostMicros > priceFloor {
+			priceFloor = binding.UpstreamCostMicros
+		}
+	}
+	return priceFloor, nil
+}
+
 func GetSearchCapabilityByID(id int) (*SearchCapability, error) {
 	if id <= 0 {
 		return nil, errors.New("search capability id is invalid")

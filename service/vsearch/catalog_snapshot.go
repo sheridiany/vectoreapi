@@ -74,9 +74,18 @@ func loadCatalogSnapshot(principal Principal, includeDisabled bool) ([]catalogSn
 			}
 		}
 		capabilityBindings := bindingsByCapability[capability.Id]
+		_, parsedSchemaStatus := parseCapabilitySchema(capability.InputSchema)
+		schemaStatus := "unavailable"
+		if capability.SchemaStatus == model.SearchCapabilitySchemaAvailable && parsedSchemaStatus == "available" {
+			schemaStatus = "available"
+		}
 		healthyRouteCount := int64(0)
+		healthyRouteCostFloor := int64(0)
 		for _, binding := range capabilityBindings {
 			if binding.Status != model.SearchCapabilityBindingStatusEnabled {
+				continue
+			}
+			if !searchBindingMatchesCapabilitySchema(binding, capability) {
 				continue
 			}
 			account := accountsByID[binding.UpstreamAccountID]
@@ -86,20 +95,27 @@ func loadCatalogSnapshot(principal Principal, includeDisabled bool) ([]catalogSn
 			pool := poolsByID[account.PoolID]
 			if pool != nil && pool.Status == model.SearchUpstreamPoolStatusEnabled {
 				healthyRouteCount++
+				if binding.UpstreamCostMicros > healthyRouteCostFloor {
+					healthyRouteCostFloor = binding.UpstreamCostMicros
+				}
 			}
 		}
+		pricingAvailable := capability.PriceMicros >= healthyRouteCostFloor
 		interfaceCount := int64(0)
-		if healthyRouteCount > 0 {
+		if healthyRouteCount > 0 && schemaStatus == "available" && pricingAvailable {
 			interfaceCount = 1
 		}
 		status := "disabled"
-		if capability.Status == model.SearchCapabilityStatusEnabled && healthyRouteCount > 0 {
-			status = "available"
+		if capability.Status == model.SearchCapabilityStatusEnabled {
+			status = "unavailable"
+			if healthyRouteCount > 0 && schemaStatus == "available" && pricingAvailable {
+				status = "available"
+			}
 		}
 		public := PublicCapability{
 			ID: capability.PublicID, Name: capability.Name, Category: capability.Category,
-			Description: capability.Description, Status: status,
-			Enabled:        capability.Status == model.SearchCapabilityStatusEnabled && healthyRouteCount > 0,
+			Description: capability.Description, SchemaStatus: schemaStatus, Status: status,
+			Enabled:        capability.Status == model.SearchCapabilityStatusEnabled && healthyRouteCount > 0 && schemaStatus == "available" && pricingAvailable,
 			InterfaceCount: interfaceCount, CostLabel: formatMicros(capability.PriceMicros),
 			Price: float64(capability.PriceMicros) / 1_000_000, PriceMicros: capability.PriceMicros,
 			LastSyncedAt: capability.LastSyncedAt,
@@ -113,4 +129,8 @@ func loadCatalogSnapshot(principal Principal, includeDisabled bool) ([]catalogSn
 		result = append(result, catalogSnapshotItem{capability: capability, bindings: capabilityBindings, public: public})
 	}
 	return result, nil
+}
+
+func searchBindingMatchesCapabilitySchema(binding *model.SearchCapabilityBinding, capability *model.SearchCapability) bool {
+	return binding != nil && capability != nil && binding.InputSchema == capability.InputSchema
 }

@@ -46,6 +46,7 @@ func registerSearchRoutes(apiRouter *gin.RouterGroup, anonymousRequestBodyLimit 
 		searchAdminRoute.POST("/upstream-accounts/:id/test", middleware.CriticalRateLimit(), middleware.DisableCache(), controller.AdminTestSearchUpstreamAccount)
 		searchAdminRoute.GET("/catalog", controller.AdminGetSearchCatalog)
 		searchAdminRoute.POST("/catalog/sync", middleware.CriticalRateLimit(), middleware.DisableCache(), controller.AdminSyncSearchCatalog)
+		searchAdminRoute.POST("/catalog/publish", middleware.CriticalRateLimit(), middleware.DisableCache(), controller.AdminPublishSearchCatalog)
 		searchAdminRoute.PATCH("/catalog/:id", middleware.CriticalRateLimit(), middleware.DisableCache(), controller.AdminConfigureSearchCapability)
 		searchAdminRoute.GET("/catalog/:id/grants", controller.AdminGetSearchCapabilityEnterpriseGrants)
 		searchAdminRoute.PUT("/catalog/:id/grants", middleware.CriticalRateLimit(), middleware.DisableCache(), controller.AdminSetSearchCapabilityEnterpriseGrants)

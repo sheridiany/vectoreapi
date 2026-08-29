@@ -1,6 +1,7 @@
 package model
 
 import (
+	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
@@ -167,6 +168,113 @@ func TestSearchCapabilityDiscoveryPreservesAdminConfiguration(t *testing.T) {
 	granted, err = IsSearchCapabilityGranted(stored.Id, 12, 8)
 	require.NoError(t, err)
 	assert.True(t, granted, "user-specific rows do not change enterprise capability access")
+}
+
+func TestSearchCapabilityPriceFloorIgnoresEnabledBindingWithMismatchedSchema(t *testing.T) {
+	openSearchDataTestDB(t)
+	// NOCASE reproduces MySQL's common _ci TEXT comparison so exact schema matching must happen in Go.
+	require.NoError(t, DB.Migrator().DropTable(&SearchCapabilityBinding{}))
+	require.NoError(t, DB.Exec(`CREATE TABLE search_capability_bindings (
+		id integer PRIMARY KEY AUTOINCREMENT,
+		capability_id integer NOT NULL,
+		upstream_account_id integer NOT NULL,
+		tool_name text NOT NULL,
+		input_schema text COLLATE NOCASE,
+		status integer NOT NULL,
+		weight integer NOT NULL,
+		priority integer NOT NULL,
+		upstream_cost_micros integer NOT NULL,
+		last_synced_at integer,
+		created_at integer,
+		updated_at integer,
+		CONSTRAINT idx_search_capability_binding UNIQUE (capability_id, upstream_account_id, tool_name)
+	)`).Error)
+	publicID, err := GenerateSearchCapabilityPublicID("private/schema-price-floor")
+	require.NoError(t, err)
+	capability := &SearchCapability{
+		PublicID: publicID, Name: "Schema Price Floor", Category: "web-search",
+		InputSchema: `{"type":"object"}`, Status: SearchCapabilityStatusEnabled,
+		UpstreamCostMicros: 50, PriceMicros: 50,
+	}
+	require.NoError(t, CreateSearchCapability(capability))
+	require.NoError(t, UpsertSearchCapabilityBinding(&SearchCapabilityBinding{
+		CapabilityID: capability.Id, UpstreamAccountID: 1, ToolName: "private/schema-price-floor",
+		InputSchema: capability.InputSchema, Status: SearchCapabilityBindingStatusEnabled,
+		UpstreamCostMicros: 200,
+	}))
+	require.NoError(t, UpsertSearchCapabilityBinding(&SearchCapabilityBinding{
+		CapabilityID: capability.Id, UpstreamAccountID: 2, ToolName: "private/schema-price-floor",
+		InputSchema: `{"TYPE":"OBJECT"}`,
+		Status:      SearchCapabilityBindingStatusEnabled, UpstreamCostMicros: 900,
+	}))
+
+	priceFloor, err := GetSearchCapabilityPriceFloor(capability.Id)
+	require.NoError(t, err)
+	assert.Equal(t, int64(200), priceFloor)
+	require.NoError(t, RefreshSearchCapabilityPriceFloor(capability.Id))
+	stored, err := GetSearchCapabilityByID(capability.Id)
+	require.NoError(t, err)
+	assert.Equal(t, int64(200), stored.UpstreamCostMicros)
+	assert.Equal(t, int64(200), stored.PriceMicros)
+}
+
+func TestRefreshSearchCapabilityPriceFloorReadsAndUpdatesInOneTransaction(t *testing.T) {
+	openSearchDataTestDB(t)
+	publicID, err := GenerateSearchCapabilityPublicID("private/transactional-price-floor")
+	require.NoError(t, err)
+	capability := &SearchCapability{
+		PublicID: publicID, Name: "Transactional Price Floor", Category: "web-search",
+		InputSchema: `{"type":"object"}`, Status: SearchCapabilityStatusEnabled,
+		UpstreamCostMicros: 50, PriceMicros: 50,
+	}
+	require.NoError(t, CreateSearchCapability(capability))
+	require.NoError(t, UpsertSearchCapabilityBinding(&SearchCapabilityBinding{
+		CapabilityID: capability.Id, UpstreamAccountID: 1, ToolName: "private/transactional-price-floor",
+		InputSchema: capability.InputSchema, Status: SearchCapabilityBindingStatusEnabled,
+		UpstreamCostMicros: 200,
+	}))
+
+	operations := make([]string, 0, 3)
+	var transaction *sql.Tx
+	recordOperation := func(operation string, tx *gorm.DB) {
+		sqlTx, inTransaction := tx.Statement.ConnPool.(*sql.Tx)
+		if !inTransaction {
+			operations = append(operations, operation+":outside")
+			return
+		}
+		if transaction == nil {
+			transaction = sqlTx
+		}
+		if transaction != sqlTx {
+			operations = append(operations, operation+":different")
+			return
+		}
+		operations = append(operations, operation+":same")
+	}
+	const queryCallback = "test:capture_price_floor_transaction_queries"
+	require.NoError(t, DB.Callback().Query().Before("gorm:query").Register(queryCallback, func(tx *gorm.DB) {
+		switch tx.Statement.Table {
+		case "search_capabilities":
+			recordOperation("capability-read", tx)
+		case "search_capability_bindings":
+			recordOperation("bindings-read", tx)
+		}
+	}))
+	t.Cleanup(func() { _ = DB.Callback().Query().Remove(queryCallback) })
+	const updateCallback = "test:capture_price_floor_transaction_update"
+	require.NoError(t, DB.Callback().Update().Before("gorm:update").Register(updateCallback, func(tx *gorm.DB) {
+		if tx.Statement.Table == "search_capabilities" {
+			recordOperation("capability-update", tx)
+		}
+	}))
+	t.Cleanup(func() { _ = DB.Callback().Update().Remove(updateCallback) })
+
+	require.NoError(t, RefreshSearchCapabilityPriceFloor(capability.Id))
+	assert.Equal(t, []string{
+		"capability-read:same",
+		"bindings-read:same",
+		"capability-update:same",
+	}, operations)
 }
 
 func TestSearchUsageEventsKeepExactMicrosAndTenantIsolation(t *testing.T) {

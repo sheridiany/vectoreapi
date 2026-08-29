@@ -25,6 +25,7 @@ import {
   fetchSearchCapabilityEnterpriseGrants,
   fetchSearchGrantEnterprises,
   fetchSearchUpstreamAccounts,
+  publishAdminSearchCatalog,
   syncAdminSearchCatalog,
   testSearchUpstreamAccount,
   updateSearchUpstreamAccount,
@@ -41,6 +42,7 @@ vi.mock('../api', () => ({
   fetchAdminSearchCatalog: vi.fn(),
   fetchSearchCapabilityEnterpriseGrants: vi.fn(),
   fetchSearchGrantEnterprises: vi.fn(),
+  publishAdminSearchCatalog: vi.fn(),
   syncAdminSearchCatalog: vi.fn(),
   updateAdminSearchCatalogItem: vi.fn(),
   updateSearchCapabilityEnterpriseGrants: vi.fn(),
@@ -125,6 +127,7 @@ describe('vSearch administration pages', () => {
         category: 'Search',
         description: 'Search the public web.',
         status: 'available',
+        schema_status: 'available',
         enabled: true,
         interface_count: 3,
         upstream_cost: 0.1,
@@ -138,6 +141,7 @@ describe('vSearch administration pages', () => {
         category: 'Extract',
         description: 'Extract readable pages.',
         status: 'available',
+        schema_status: 'available',
         enabled: true,
         interface_count: 2,
         upstream_cost: 0.3,
@@ -146,7 +150,21 @@ describe('vSearch administration pages', () => {
         price_micros: 456,
       },
     ])
-    vi.mocked(syncAdminSearchCatalog).mockResolvedValue({ synced: 2 })
+    vi.mocked(syncAdminSearchCatalog).mockResolvedValue({
+      synced: 2,
+      synced_service_ids: ['vr_svc_brave', 'vr_svc_firecrawl'],
+    })
+    vi.mocked(publishAdminSearchCatalog).mockResolvedValue({
+      published: 1,
+      skipped: 1,
+      published_service_ids: ['vr_svc_brave'],
+      skipped_services: [
+        {
+          service_id: 'vr_svc_firecrawl',
+          reason: 'schema_unavailable',
+        },
+      ],
+    })
     vi.mocked(fetchSearchCapabilityEnterpriseGrants).mockResolvedValue({
       capability_id: 'brave',
       access_mode: 'selected_enterprises',
@@ -445,6 +463,68 @@ describe('vSearch administration pages', () => {
     await user.click(screen.getByRole('button', { name: 'Extract' }))
     expect(screen.getAllByText('Firecrawl').length).toBeGreaterThan(0)
     expect(screen.queryByText('Brave Search')).not.toBeInTheDocument()
+  })
+
+  test('confirms and publishes only capabilities returned by the latest sync', async () => {
+    const user = userEvent.setup()
+    renderWithQuery(<SearchAdminCatalogPage />)
+
+    await screen.findAllByText('Brave Search')
+    expect(
+      screen.queryByRole('button', {
+        name: 'Publish synchronized capabilities',
+      })
+    ).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Sync catalog' }))
+    const publishButton = await screen.findByRole('button', {
+      name: 'Publish synchronized capabilities',
+    })
+    await user.click(publishButton)
+
+    expect(
+      await screen.findByRole('heading', { name: 'Publish capabilities?' })
+    ).toBeVisible()
+    await user.click(
+      screen.getByRole('button', { name: 'Publish capabilities' })
+    )
+
+    await waitFor(() =>
+      expect(
+        vi.mocked(publishAdminSearchCatalog).mock.calls.at(-1)?.[0]
+      ).toEqual({
+        service_ids: ['vr_svc_brave', 'vr_svc_firecrawl'],
+        access_mode: 'all_enterprises',
+      })
+    )
+  })
+
+  test('labels schema-unavailable capabilities and prevents enabling them', async () => {
+    vi.mocked(fetchAdminSearchCatalog).mockResolvedValueOnce([
+      {
+        id: 'unavailable',
+        name: 'Unavailable Search',
+        category: 'Search',
+        description: 'Missing parameter schema.',
+        status: 'unavailable',
+        schema_status: 'unavailable',
+        enabled: false,
+        interface_count: 0,
+        healthy_route_count: 1,
+      },
+    ])
+    renderWithQuery(<SearchAdminCatalogPage />)
+
+    expect(
+      (await screen.findAllByText('Parameter schema unavailable')).length
+    ).toBeGreaterThan(0)
+    const availabilitySwitches = screen.getAllByRole('switch', {
+      name: 'Enable {{name}}',
+    })
+    expect(availabilitySwitches.length).toBeGreaterThan(0)
+    for (const availabilitySwitch of availabilitySwitches) {
+      expect(availabilitySwitch).toHaveAttribute('aria-disabled', 'true')
+    }
   })
 
   test('edits catalog prices through exact micros', async () => {

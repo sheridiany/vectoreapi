@@ -56,11 +56,12 @@ type SyncCommand struct {
 }
 
 type SyncResult struct {
-	Synced     int                `json:"synced"`
-	Discovered int                `json:"discovered"`
-	Accounts   int                `json:"accounts"`
-	Failures   []string           `json:"failures"`
-	Services   []PublicCapability `json:"services"`
+	Synced           int                `json:"synced"`
+	Discovered       int                `json:"discovered"`
+	Accounts         int                `json:"accounts"`
+	Failures         []string           `json:"failures"`
+	Services         []PublicCapability `json:"services"`
+	SyncedServiceIDs []string           `json:"synced_service_ids"`
 }
 
 type CapabilityCommand struct {
@@ -243,7 +244,8 @@ func (control *ControlPlane) SyncCatalog(ctx context.Context, command SyncComman
 		return SyncResult{}, &PublicError{Code: "UPSTREAM_ACCOUNT_UNAVAILABLE", Message: "请先接入并通过健康检查的 AgentKey 账号。", HTTPStatus: http.StatusServiceUnavailable}
 	}
 
-	result := SyncResult{Failures: make([]string, 0)}
+	result := SyncResult{Failures: make([]string, 0), SyncedServiceIDs: make([]string, 0)}
+	syncedServiceIDs := make(map[string]struct{})
 	for _, account := range healthy {
 		accountSyncedAt := common.GetTimestamp()
 		accountSyncComplete := true
@@ -341,12 +343,22 @@ func (control *ControlPlane) SyncCatalog(ctx context.Context, command SyncComman
 				result.Failures = append(result.Failures, account.Name+"：能力绑定失败")
 				continue
 			}
+			if priceErr := model.RefreshSearchCapabilityPriceFloor(persisted.Id); priceErr != nil {
+				accountSyncComplete = false
+				result.Failures = append(result.Failures, account.Name+"：能力价格更新失败")
+				continue
+			}
 			result.Synced++
+			if _, exists := syncedServiceIDs[publicID]; !exists {
+				syncedServiceIDs[publicID] = struct{}{}
+				result.SyncedServiceIDs = append(result.SyncedServiceIDs, publicID)
+			}
 		}
 		if !accountSyncComplete {
 			result.Failures = append(result.Failures, account.Name+"：目录不完整，已保留原有路由")
 		}
 	}
+	sort.Strings(result.SyncedServiceIDs)
 	if result.Synced == 0 {
 		return result, &PublicError{Code: "CATALOG_SYNC_FAILED", Message: "没有同步到可用能力，请检查 AgentKey 账号。", HTTPStatus: http.StatusBadGateway}
 	}
@@ -358,6 +370,29 @@ func (control *ControlPlane) ConfigureCapability(ctx context.Context, command Ca
 	if command.PriceMicros < 0 || command.PriceMicros > maxSearchMoneyMicros {
 		return PublicCapability{}, &PublicError{Code: "CAPABILITY_PRICE_INVALID", Message: "能力售价无效。", HTTPStatus: http.StatusBadRequest}
 	}
+	capability, err := model.GetSearchCapabilityByID(command.ID)
+	if err != nil {
+		return PublicCapability{}, err
+	}
+	if command.Enabled {
+		if _, schemaStatus := parseCapabilitySchema(capability.InputSchema); capability.SchemaStatus != model.SearchCapabilitySchemaAvailable || schemaStatus != "available" {
+			return PublicCapability{}, &PublicError{Code: "CAPABILITY_SCHEMA_UNAVAILABLE", Message: "该能力的参数定义尚未同步。", HTTPStatus: http.StatusServiceUnavailable}
+		}
+		healthyBindings, listErr := listHealthySearchBindings(command.ID)
+		if listErr != nil {
+			return PublicCapability{}, listErr
+		}
+		if len(healthyBindings) == 0 {
+			return PublicCapability{}, &PublicError{Code: "CAPABILITY_UNAVAILABLE", Message: "该能力当前没有可用上游账号。", HTTPStatus: http.StatusServiceUnavailable}
+		}
+		priceFloor, floorErr := model.GetSearchCapabilityPriceFloor(command.ID)
+		if floorErr != nil {
+			return PublicCapability{}, floorErr
+		}
+		if command.PriceMicros < priceFloor {
+			return PublicCapability{}, &PublicError{Code: "CAPABILITY_PRICE_BELOW_COST", Message: "能力售价不能低于上游成本。", HTTPStatus: http.StatusBadRequest}
+		}
+	}
 	status := model.SearchCapabilityStatusDisabled
 	if command.Enabled {
 		status = model.SearchCapabilityStatusEnabled
@@ -365,7 +400,7 @@ func (control *ControlPlane) ConfigureCapability(ctx context.Context, command Ca
 	if err := model.ConfigureSearchCapability(command.ID, status, command.PriceMicros); err != nil {
 		return PublicCapability{}, err
 	}
-	capability, err := model.GetSearchCapabilityByID(command.ID)
+	capability, err = model.GetSearchCapabilityByID(command.ID)
 	if err != nil {
 		return PublicCapability{}, err
 	}
@@ -511,9 +546,12 @@ func flattenToolRecords(value any) []discoveredTool {
 						Cost: firstNumber(typed, "cost", "price", "credits"), Schema: extractInputSchema(typed),
 					})
 				}
+				return
 			}
-			for _, nested := range typed {
-				visit(nested, depth+1)
+			for _, key := range []string{"tools", "tool", "services", "items", "results", "content", "data", "result", "structuredContent", "structured_content", "text"} {
+				if nested, ok := typed[key]; ok {
+					visit(nested, depth+1)
+				}
 			}
 		}
 	}
@@ -544,14 +582,16 @@ func mergeToolDescription(tool *discoveredTool, payload any) {
 			if description := firstString(typed, "description", "summary"); description != "" {
 				tool.Description = description
 			}
-			if schema := extractInputSchema(typed); schema != nil {
+			if schema, declared := extractInputSchemaCandidate(typed); declared {
 				tool.Schema = schema
 			}
-			if cost := firstNumber(typed, "cost", "price", "credits"); cost > 0 {
+			if cost := firstNumber(typed, "cost", "price", "credits", "amount", "value"); cost > 0 {
 				tool.Cost = cost
 			}
-			for _, nested := range typed {
-				visit(nested, depth+1)
+			for _, key := range []string{"content", "data", "result", "structuredContent", "structured_content", "text", "tool", "pricing", "cost"} {
+				if nested, ok := typed[key]; ok {
+					visit(nested, depth+1)
+				}
 			}
 		}
 	}
@@ -559,14 +599,166 @@ func mergeToolDescription(tool *discoveredTool, payload any) {
 }
 
 func extractInputSchema(value map[string]any) map[string]any {
-	for _, key := range []string{"inputSchema", "input_schema", "schema", "parametersSchema", "parameters"} {
-		if schema, ok := value[key].(map[string]any); ok {
-			if _, hasType := schema["type"]; hasType || schema["properties"] != nil {
-				return schema
+	schema, _ := extractInputSchemaCandidate(value)
+	return schema
+}
+
+func extractInputSchemaCandidate(value map[string]any) (map[string]any, bool) {
+	for _, key := range []string{"inputSchema", "input_schema", "schema", "parametersSchema"} {
+		raw, exists := value[key]
+		if !exists {
+			continue
+		}
+		if raw == nil {
+			return nil, true
+		}
+		schema, ok := raw.(map[string]any)
+		if !ok {
+			return nil, true
+		}
+		if _, hasType := schema["type"]; hasType || schema["properties"] != nil {
+			return schema, true
+		}
+		return nil, true
+	}
+	rawParameters, declared := value["parameters"]
+	if !declared {
+		return nil, false
+	}
+	if rawParameters == nil {
+		return nil, true
+	}
+	if schema, ok := rawParameters.(map[string]any); ok {
+		if _, hasType := schema["type"]; hasType || schema["properties"] != nil {
+			return schema, true
+		}
+		return nil, true
+	}
+	parameters, ok := rawParameters.([]any)
+	if !ok {
+		return nil, true
+	}
+	if len(parameters) == 0 {
+		return map[string]any{"type": "object", "properties": map[string]any{}, "additionalProperties": false}, true
+	}
+	properties := make(map[string]any, len(parameters))
+	required := make([]any, 0)
+	requiredNames := make(map[string]struct{})
+	for _, item := range parameters {
+		parameter, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		name := firstString(parameter, "name")
+		if name == "" {
+			continue
+		}
+		typeName, supported := normalizeParameterSchemaType(firstString(parameter, "type"))
+		if !supported {
+			return nil, true
+		}
+		property := map[string]any{"type": typeName}
+		if description := firstString(parameter, "description", "summary"); description != "" {
+			property["description"] = description
+		}
+		if enum, ok := parameter["enum"].([]any); ok && len(enum) > 0 {
+			property["enum"] = enum
+		}
+		if defaultValue, exists := parameter["default"]; exists && defaultValue != nil {
+			property["default"] = defaultValue
+		}
+		constraintKeys := []struct {
+			output string
+			inputs []string
+		}{
+			{output: "minimum", inputs: []string{"minimum", "min"}},
+			{output: "maximum", inputs: []string{"maximum", "max"}},
+		}
+		for _, constraint := range constraintKeys {
+			for _, input := range constraint.inputs {
+				if number, valid := schemaNumber(parameter[input]); valid {
+					property[constraint.output] = number
+					break
+				}
+			}
+		}
+		if typeName == "array" {
+			itemType := firstString(parameter, "itemType", "item_type", "itemsType", "items_type")
+			switch items := parameter["items"].(type) {
+			case string:
+				itemType = items
+			case map[string]any:
+				itemType = firstString(items, "type")
+			}
+			normalizedItemType, supported := normalizeParameterSchemaType(itemType)
+			if !supported {
+				return nil, true
+			}
+			property["items"] = map[string]any{"type": normalizedItemType}
+		}
+		properties[name] = property
+		if requiredValue, _ := parameter["required"].(bool); requiredValue {
+			if _, exists := requiredNames[name]; !exists {
+				requiredNames[name] = struct{}{}
+				required = append(required, name)
 			}
 		}
 	}
-	return nil
+	if len(properties) == 0 {
+		return nil, true
+	}
+	schema := map[string]any{"type": "object", "properties": properties, "additionalProperties": false}
+	if len(required) > 0 {
+		schema["required"] = required
+	}
+	return schema, true
+}
+
+func normalizeParameterSchemaType(value string) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "string", "str", "text", "url", "date", "datetime":
+		return "string", true
+	case "integer", "int", "int32", "int64":
+		return "integer", true
+	case "number", "float", "float32", "float64", "double", "decimal":
+		return "number", true
+	case "boolean", "bool":
+		return "boolean", true
+	case "object", "map", "dict", "json":
+		return "object", true
+	case "array", "list", "slice":
+		return "array", true
+	default:
+		return "", false
+	}
+}
+
+func schemaNumber(value any) (float64, bool) {
+	var number float64
+	switch typed := value.(type) {
+	case float64:
+		number = typed
+	case float32:
+		number = float64(typed)
+	case int:
+		number = float64(typed)
+	case int32:
+		number = float64(typed)
+	case int64:
+		number = float64(typed)
+	case string:
+		parsed, err := strconv.ParseFloat(strings.TrimSpace(typed), 64)
+		if err != nil {
+			return 0, false
+		}
+		number = parsed
+	default:
+		return 0, false
+	}
+	if math.IsNaN(number) || math.IsInf(number, 0) {
+		return 0, false
+	}
+	return number, true
 }
 
 func firstString(value map[string]any, keys ...string) string {
