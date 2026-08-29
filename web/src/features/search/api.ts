@@ -61,6 +61,7 @@ export type SearchCatalogItem = {
   category: string
   description: string
   status: SearchCatalogStatus
+  schema_status?: 'available' | 'unavailable'
   enabled: boolean
   interface_count: number
   healthy_route_count?: number
@@ -164,6 +165,21 @@ export type SearchAdminCatalogItem = SearchCatalogItem & {
   upstream_cost?: number | null
   upstream_cost_micros?: number | null
   price?: number | null
+}
+
+export type SearchCatalogSyncResult = {
+  synced: number
+  synced_service_ids: string[]
+}
+
+export type SearchCatalogPublishResult = {
+  published: number
+  skipped: number
+  published_service_ids: string[]
+  skipped_services: Array<{
+    service_id: string
+    reason: string
+  }>
 }
 
 export type SearchCapabilityEnterpriseGrants = {
@@ -454,13 +470,22 @@ export async function fetchAdminSearchCatalog(): Promise<
   return unwrapResponse(response.data, 'Failed to load capability catalog')
 }
 
-export async function syncAdminSearchCatalog(): Promise<{
-  synced: number
-}> {
-  const response = await api.post<ApiResponse<{ synced: number }>>(
+export async function syncAdminSearchCatalog(): Promise<SearchCatalogSyncResult> {
+  const response = await api.post<ApiResponse<SearchCatalogSyncResult>>(
     '/api/search/admin/catalog/sync'
   )
   return unwrapResponse(response.data, 'Catalog synchronization failed')
+}
+
+export async function publishAdminSearchCatalog(input: {
+  service_ids: string[]
+  access_mode: 'all_enterprises'
+}): Promise<SearchCatalogPublishResult> {
+  const response = await api.post<ApiResponse<SearchCatalogPublishResult>>(
+    '/api/search/admin/catalog/publish',
+    input
+  )
+  return unwrapResponse(response.data, 'Catalog publish failed')
 }
 
 export async function updateAdminSearchCatalogItem(

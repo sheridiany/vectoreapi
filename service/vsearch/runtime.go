@@ -9,6 +9,7 @@ import (
 	"math/big"
 	"net/http"
 	"os"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
@@ -30,6 +31,7 @@ type PublicCapability struct {
 	Name               string   `json:"name"`
 	Category           string   `json:"category"`
 	Description        string   `json:"description"`
+	SchemaStatus       string   `json:"schema_status"`
 	Status             string   `json:"status"`
 	Enabled            bool     `json:"enabled"`
 	InterfaceCount     int64    `json:"interface_count"`
@@ -195,7 +197,7 @@ func (runtime *ExecutionRuntime) Describe(ctx context.Context, principal Princip
 	if err != nil {
 		return ToolContract{}, err
 	}
-	bindings, err := listHealthySearchBindings(capability.Id)
+	bindings, err := listHealthySearchBindingsForCapability(capability)
 	if err != nil {
 		return ToolContract{}, err
 	}
@@ -203,6 +205,14 @@ func (runtime *ExecutionRuntime) Describe(ctx context.Context, principal Princip
 		return ToolContract{}, &PublicError{Code: "CAPABILITY_UNAVAILABLE", Message: "该能力暂不可用。", HTTPStatus: http.StatusServiceUnavailable}
 	}
 	schema, schemaStatus := parseCapabilitySchema(capability.InputSchema)
+	if schemaStatus != "available" {
+		return ToolContract{}, &PublicError{Code: "CAPABILITY_SCHEMA_UNAVAILABLE", Message: "该能力的参数定义尚未同步。", HTTPStatus: http.StatusServiceUnavailable}
+	}
+	if capability.PriceMicros < healthySearchBindingsPriceFloor(bindings) {
+		return ToolContract{}, &PublicError{
+			Code: "CAPABILITY_PRICING_STALE", Message: "该能力价格正在同步，请稍后重试。", HTTPStatus: http.StatusServiceUnavailable,
+		}
+	}
 	return ToolContract{
 		Service: ToolContractService{
 			ID: capability.PublicID, Name: capability.Name, Category: capability.Category,
@@ -229,9 +239,15 @@ func (runtime *ExecutionRuntime) executeOnce(ctx context.Context, principal Prin
 	if validationErr := validateCapabilityParams(command.Params, capability.InputSchema); validationErr != nil {
 		return ExecutionResult{}, failSearchExecution(ctx, requestID, principal, capability, nil, nil, command.ServiceID, inputBytes, startedAt, nil, validationErr)
 	}
-	binding, account, err := selectExecutionTarget(capability.Id)
+	binding, account, priceFloor, err := selectExecutionTarget(capability)
 	if err != nil {
 		return ExecutionResult{}, failSearchExecution(ctx, requestID, principal, capability, nil, nil, command.ServiceID, inputBytes, startedAt, nil, err)
+	}
+	if capability.PriceMicros < priceFloor {
+		pricingErr := &PublicError{
+			Code: "CAPABILITY_PRICING_STALE", Message: "该能力价格正在同步，请稍后重试。", HTTPStatus: http.StatusServiceUnavailable,
+		}
+		return ExecutionResult{}, failSearchExecution(ctx, requestID, principal, capability, account, nil, command.ServiceID, inputBytes, startedAt, nil, pricingErr)
 	}
 	secret, err := DecryptUpstreamSecret(EncryptedSecret{
 		Ciphertext: account.SecretCiphertext, Nonce: account.SecretNonce, Version: account.SecretVersion,
@@ -422,11 +438,12 @@ func (runtime *ExecutionRuntime) authorizedCapability(principal Principal, publi
 	return capability, nil
 }
 
-func selectExecutionTarget(capabilityID int) (*model.SearchCapabilityBinding, *model.SearchUpstreamAccount, error) {
-	bindings, err := listHealthySearchBindings(capabilityID)
+func selectExecutionTarget(capability *model.SearchCapability) (*model.SearchCapabilityBinding, *model.SearchUpstreamAccount, int64, error) {
+	bindings, err := listHealthySearchBindingsForCapability(capability)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, 0, err
 	}
+	priceFloor := healthySearchBindingsPriceFloor(bindings)
 	type candidate struct {
 		binding *model.SearchCapabilityBinding
 		account *model.SearchUpstreamAccount
@@ -450,7 +467,7 @@ func selectExecutionTarget(capabilityID int) (*model.SearchCapabilityBinding, *m
 		candidates = append(candidates, candidate{binding: binding, account: account, weight: weight})
 	}
 	if len(candidates) == 0 {
-		return nil, nil, &PublicError{Code: "CAPABILITY_UNAVAILABLE", Message: "该能力当前没有可用上游账号。", HTTPStatus: http.StatusServiceUnavailable}
+		return nil, nil, 0, &PublicError{Code: "CAPABILITY_UNAVAILABLE", Message: "该能力当前没有可用上游账号。", HTTPStatus: http.StatusServiceUnavailable}
 	}
 	totalWeight := 0
 	for _, item := range candidates {
@@ -458,16 +475,16 @@ func selectExecutionTarget(capabilityID int) (*model.SearchCapabilityBinding, *m
 	}
 	selectedWeight, randomErr := cryptorand.Int(cryptorand.Reader, big.NewInt(int64(totalWeight)))
 	if randomErr != nil {
-		return candidates[0].binding, candidates[0].account, nil
+		return candidates[0].binding, candidates[0].account, priceFloor, nil
 	}
 	position := int(selectedWeight.Int64())
 	for _, item := range candidates {
 		if position < item.weight {
-			return item.binding, item.account, nil
+			return item.binding, item.account, priceFloor, nil
 		}
 		position -= item.weight
 	}
-	return candidates[len(candidates)-1].binding, candidates[len(candidates)-1].account, nil
+	return candidates[len(candidates)-1].binding, candidates[len(candidates)-1].account, priceFloor, nil
 }
 
 type healthySearchBinding struct {
@@ -475,13 +492,34 @@ type healthySearchBinding struct {
 	account *model.SearchUpstreamAccount
 }
 
+func healthySearchBindingsPriceFloor(bindings []healthySearchBinding) int64 {
+	priceFloor := int64(0)
+	for _, healthy := range bindings {
+		if healthy.binding.UpstreamCostMicros > priceFloor {
+			priceFloor = healthy.binding.UpstreamCostMicros
+		}
+	}
+	return priceFloor
+}
+
 func listHealthySearchBindings(capabilityID int) ([]healthySearchBinding, error) {
-	bindings, err := model.ListSearchCapabilityBindings(capabilityID, true)
+	capability, err := model.GetSearchCapabilityByID(capabilityID)
+	if err != nil {
+		return nil, err
+	}
+	return listHealthySearchBindingsForCapability(capability)
+}
+
+func listHealthySearchBindingsForCapability(capability *model.SearchCapability) ([]healthySearchBinding, error) {
+	bindings, err := model.ListSearchCapabilityBindings(capability.Id, true)
 	if err != nil {
 		return nil, err
 	}
 	healthy := make([]healthySearchBinding, 0, len(bindings))
 	for _, binding := range bindings {
+		if !searchBindingMatchesCapabilitySchema(binding, capability) {
+			continue
+		}
 		account, accountErr := model.GetSearchUpstreamAccountByID(binding.UpstreamAccountID)
 		if errors.Is(accountErr, gorm.ErrRecordNotFound) {
 			continue
@@ -597,12 +635,12 @@ func validateSchemaValue(value any, schema map[string]any, path string) error {
 			return fmt.Errorf("%s 必须是字符串", path)
 		}
 	case "integer":
-		number, ok := value.(float64)
+		number, ok := runtimeNumber(value)
 		if !ok || math.Trunc(number) != number {
 			return fmt.Errorf("%s 必须是整数", path)
 		}
 	case "number":
-		if _, ok := value.(float64); !ok {
+		if _, ok := runtimeNumber(value); !ok {
 			return fmt.Errorf("%s 必须是数字", path)
 		}
 	case "boolean":
@@ -610,11 +648,66 @@ func validateSchemaValue(value any, schema map[string]any, path string) error {
 			return fmt.Errorf("%s 必须是布尔值", path)
 		}
 	case "array":
-		if _, ok := value.([]any); !ok {
+		items, ok := value.([]any)
+		if !ok {
 			return fmt.Errorf("%s 必须是数组", path)
+		}
+		if itemSchema, ok := schema["items"].(map[string]any); ok {
+			for index, item := range items {
+				if err := validateSchemaValue(item, itemSchema, fmt.Sprintf("%s[%d]", path, index)); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	if enum, ok := schema["enum"].([]any); ok && len(enum) > 0 {
+		matched := false
+		for _, option := range enum {
+			if schemaValuesEqual(value, option) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return fmt.Errorf("%s 不是支持的选项", path)
+		}
+	}
+	if number, ok := runtimeNumber(value); ok {
+		if minimum, valid := schemaNumber(schema["minimum"]); valid && number < minimum {
+			return fmt.Errorf("%s 不能小于 %v", path, minimum)
+		}
+		if maximum, valid := schemaNumber(schema["maximum"]); valid && number > maximum {
+			return fmt.Errorf("%s 不能大于 %v", path, maximum)
 		}
 	}
 	return nil
+}
+
+func schemaValuesEqual(left, right any) bool {
+	leftNumber, leftIsNumber := runtimeNumber(left)
+	rightNumber, rightIsNumber := runtimeNumber(right)
+	if leftIsNumber || rightIsNumber {
+		return leftIsNumber && rightIsNumber && leftNumber == rightNumber
+	}
+	return reflect.DeepEqual(left, right)
+}
+
+func runtimeNumber(value any) (float64, bool) {
+	switch typed := value.(type) {
+	case float64:
+		return typed, !math.IsNaN(typed) && !math.IsInf(typed, 0)
+	case float32:
+		number := float64(typed)
+		return number, !math.IsNaN(number) && !math.IsInf(number, 0)
+	case int:
+		return float64(typed), true
+	case int32:
+		return float64(typed), true
+	case int64:
+		return float64(typed), true
+	default:
+		return 0, false
+	}
 }
 
 func safeRuntimeError(err error) *PublicError {

@@ -21,6 +21,8 @@ import {
   fetchSearchGrantEnterprises,
   fetchSearchUsageLogs,
   revokeAdminSearchAgentKey,
+  publishAdminSearchCatalog,
+  syncAdminSearchCatalog,
   updateAdminSearchCatalogItem,
   updateSearchCapabilityEnterpriseGrants,
   updateSearchUpstreamAccount,
@@ -224,6 +226,57 @@ describe('vSearch frontend API contract', () => {
     expect(api.patch).toHaveBeenCalledWith(
       '/api/search/admin/catalog/brave%2Fsearch',
       { price_micros: 1 }
+    )
+  })
+
+  test('publishes only the service ids returned by the latest catalog sync', async () => {
+    vi.mocked(api.post)
+      .mockResolvedValueOnce({
+        data: {
+          success: true,
+          data: {
+            synced: 2,
+            synced_service_ids: ['vr_svc_brave', 'vr_svc_firecrawl'],
+          },
+        },
+      })
+      .mockResolvedValueOnce({
+        data: {
+          success: true,
+          data: {
+            published: 1,
+            skipped: 1,
+            published_service_ids: ['vr_svc_brave'],
+            skipped_services: [
+              {
+                service_id: 'vr_svc_firecrawl',
+                reason: 'schema_unavailable',
+              },
+            ],
+          },
+        },
+      })
+
+    const syncResult = await syncAdminSearchCatalog()
+    const publishResult = await publishAdminSearchCatalog({
+      service_ids: syncResult.synced_service_ids,
+      access_mode: 'all_enterprises',
+    })
+
+    expect(api.post).toHaveBeenNthCalledWith(
+      1,
+      '/api/search/admin/catalog/sync'
+    )
+    expect(api.post).toHaveBeenNthCalledWith(
+      2,
+      '/api/search/admin/catalog/publish',
+      {
+        service_ids: ['vr_svc_brave', 'vr_svc_firecrawl'],
+        access_mode: 'all_enterprises',
+      }
+    )
+    expect(publishResult).toEqual(
+      expect.objectContaining({ published: 1, skipped: 1 })
     )
   })
 
