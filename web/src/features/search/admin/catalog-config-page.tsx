@@ -423,7 +423,7 @@ function CatalogTable(props: {
           <TableRow key={item.id}>
             <TableCell className='min-w-64'>
               <div className='font-medium'>{item.name}</div>
-              <p className='text-muted-foreground mt-1 max-w-md text-xs leading-5'>
+              <p className='text-muted-foreground mt-1 max-w-md text-xs leading-5 break-words whitespace-normal'>
                 {item.description}
               </p>
               <p className='text-muted-foreground mt-1 text-xs'>
