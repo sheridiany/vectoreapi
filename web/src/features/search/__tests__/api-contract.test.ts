@@ -225,7 +225,8 @@ describe('vSearch frontend API contract', () => {
 
     expect(api.patch).toHaveBeenCalledWith(
       '/api/search/admin/catalog/brave%2Fsearch',
-      { price_micros: 1 }
+      { price_micros: 1 },
+      { skipErrorHandler: true, skipBusinessError: true }
     )
   })
 
@@ -236,6 +237,9 @@ describe('vSearch frontend API contract', () => {
           success: true,
           data: {
             synced: 2,
+            published: 2,
+            skipped: 0,
+            failures: [],
             synced_service_ids: ['vr_svc_brave', 'vr_svc_firecrawl'],
           },
         },
@@ -265,7 +269,9 @@ describe('vSearch frontend API contract', () => {
 
     expect(api.post).toHaveBeenNthCalledWith(
       1,
-      '/api/search/admin/catalog/sync'
+      '/api/search/admin/catalog/sync',
+      undefined,
+      { skipErrorHandler: true, skipBusinessError: true }
     )
     expect(api.post).toHaveBeenNthCalledWith(
       2,
@@ -273,7 +279,8 @@ describe('vSearch frontend API contract', () => {
       {
         service_ids: ['vr_svc_brave', 'vr_svc_firecrawl'],
         access_mode: 'all_enterprises',
-      }
+      },
+      { skipErrorHandler: true, skipBusinessError: true }
     )
     expect(publishResult).toEqual(
       expect.objectContaining({ published: 1, skipped: 1 })

@@ -169,6 +169,9 @@ export type SearchAdminCatalogItem = SearchCatalogItem & {
 
 export type SearchCatalogSyncResult = {
   synced: number
+  published: number
+  skipped: number
+  failures: string[]
   synced_service_ids: string[]
 }
 
@@ -472,7 +475,9 @@ export async function fetchAdminSearchCatalog(): Promise<
 
 export async function syncAdminSearchCatalog(): Promise<SearchCatalogSyncResult> {
   const response = await api.post<ApiResponse<SearchCatalogSyncResult>>(
-    '/api/search/admin/catalog/sync'
+    '/api/search/admin/catalog/sync',
+    undefined,
+    { skipErrorHandler: true, skipBusinessError: true }
   )
   return unwrapResponse(response.data, 'Catalog synchronization failed')
 }
@@ -483,7 +488,8 @@ export async function publishAdminSearchCatalog(input: {
 }): Promise<SearchCatalogPublishResult> {
   const response = await api.post<ApiResponse<SearchCatalogPublishResult>>(
     '/api/search/admin/catalog/publish',
-    input
+    input,
+    { skipErrorHandler: true, skipBusinessError: true }
   )
   return unwrapResponse(response.data, 'Catalog publish failed')
 }
@@ -494,7 +500,8 @@ export async function updateAdminSearchCatalogItem(
 ): Promise<SearchAdminCatalogItem> {
   const response = await api.patch<ApiResponse<SearchAdminCatalogItem>>(
     `/api/search/admin/catalog/${encodeURIComponent(id)}`,
-    patch
+    patch,
+    { skipErrorHandler: true, skipBusinessError: true }
   )
   return unwrapResponse(response.data, 'Failed to update capability')
 }

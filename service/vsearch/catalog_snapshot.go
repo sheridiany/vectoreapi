@@ -73,7 +73,16 @@ func loadCatalogSnapshot(principal Principal, includeDisabled bool) ([]catalogSn
 				continue
 			}
 		}
-		capabilityBindings := bindingsByCapability[capability.Id]
+		allCapabilityBindings := bindingsByCapability[capability.Id]
+		capabilityBindings := make([]*model.SearchCapabilityBinding, 0, len(allCapabilityBindings))
+		for _, binding := range allCapabilityBindings {
+			if searchToolAllowed(binding.ToolName) {
+				capabilityBindings = append(capabilityBindings, binding)
+			}
+		}
+		if len(allCapabilityBindings) > 0 && len(capabilityBindings) == 0 {
+			continue
+		}
 		_, parsedSchemaStatus := parseCapabilitySchema(capability.InputSchema)
 		schemaStatus := "unavailable"
 		if capability.SchemaStatus == model.SearchCapabilitySchemaAvailable && parsedSchemaStatus == "available" {

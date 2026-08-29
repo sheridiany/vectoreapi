@@ -2,6 +2,7 @@ package vsearch
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"net/http"
 	"sort"
@@ -57,6 +58,8 @@ type SyncCommand struct {
 
 type SyncResult struct {
 	Synced           int                `json:"synced"`
+	Published        int                `json:"published"`
+	Skipped          int                `json:"skipped"`
 	Discovered       int                `json:"discovered"`
 	Accounts         int                `json:"accounts"`
 	Failures         []string           `json:"failures"`
@@ -65,9 +68,10 @@ type SyncResult struct {
 }
 
 type CapabilityCommand struct {
-	ID          int
-	Enabled     bool
-	PriceMicros int64
+	ID                   int
+	Enabled              bool
+	PriceMicros          int64
+	AvailabilityOverride bool
 }
 
 type ControlPlane struct {
@@ -268,6 +272,9 @@ func (control *ControlPlane) SyncCatalog(ctx context.Context, command SyncComman
 				continue
 			}
 			for _, tool := range flattenToolRecords(payload) {
+				if !searchToolAllowed(tool.Name) {
+					continue
+				}
 				discovered[strings.ToLower(tool.Name)] = tool
 				if len(discovered) >= 500 {
 					accountSyncComplete = false
@@ -318,8 +325,9 @@ func (control *ControlPlane) SyncCatalog(ctx context.Context, command SyncComman
 			capability := &model.SearchCapability{
 				PublicID: publicID, Name: publicName, Category: publicCategory,
 				Description: publicDescription, InputSchema: schemaText,
-				Status: model.SearchCapabilityStatusDisabled, UpstreamCostMicros: costMicros,
-				PriceMicros: costMicros, LastSyncedAt: accountSyncedAt,
+				Status: model.SearchCapabilityStatusDisabled, AvailabilitySource: model.SearchCapabilityAvailabilityUpstream,
+				UpstreamCostMicros: costMicros,
+				PriceMicros:        costMicros, LastSyncedAt: accountSyncedAt,
 			}
 			if upsertErr := model.UpsertDiscoveredSearchCapability(capability); upsertErr != nil {
 				accountSyncComplete = false
@@ -343,7 +351,13 @@ func (control *ControlPlane) SyncCatalog(ctx context.Context, command SyncComman
 				result.Failures = append(result.Failures, account.Name+"：能力绑定失败")
 				continue
 			}
-			if priceErr := model.RefreshSearchCapabilityPriceFloor(persisted.Id); priceErr != nil {
+			allowedBindingIDs, listErr := listAllowedSearchBindingIDs(persisted.Id)
+			if listErr != nil {
+				accountSyncComplete = false
+				result.Failures = append(result.Failures, account.Name+"：能力价格路由读取失败")
+				continue
+			}
+			if priceErr := model.RefreshSearchCapabilityPriceFloorForBindings(persisted.Id, allowedBindingIDs); priceErr != nil {
 				accountSyncComplete = false
 				result.Failures = append(result.Failures, account.Name+"：能力价格更新失败")
 				continue
@@ -361,6 +375,30 @@ func (control *ControlPlane) SyncCatalog(ctx context.Context, command SyncComman
 	sort.Strings(result.SyncedServiceIDs)
 	if result.Synced == 0 {
 		return result, &PublicError{Code: "CATALOG_SYNC_FAILED", Message: "没有同步到可用能力，请检查 AgentKey 账号。", HTTPStatus: http.StatusBadGateway}
+	}
+	for start := 0; start < len(result.SyncedServiceIDs); start += 500 {
+		end := start + 500
+		if end > len(result.SyncedServiceIDs) {
+			end = len(result.SyncedServiceIDs)
+		}
+		publishResult, publishErr := control.publishCatalog(ctx, PublishCommand{
+			ServiceIDs: result.SyncedServiceIDs[start:end],
+			AccessMode: PublishAccessAllEnterprises,
+		}, false, true)
+		if publishErr != nil {
+			errorCategory := fmt.Sprintf("%T", publishErr)
+			if publicErr, ok := publishErr.(*PublicError); ok {
+				errorCategory = publicErr.Code
+			}
+			common.SysError(fmt.Sprintf(
+				"vSearch catalog auto-publish failed: batch_start=%d batch_end=%d error_category=%s",
+				start+1, end, errorCategory,
+			))
+			result.Failures = append(result.Failures, "目录已同步，但自动启用未全部完成，请重试。")
+			break
+		}
+		result.Published += publishResult.Published
+		result.Skipped += publishResult.Skipped
 	}
 	result.Services, err = control.runtime.ListCatalog(ctx, Principal{}, true)
 	return result, err
@@ -385,10 +423,7 @@ func (control *ControlPlane) ConfigureCapability(ctx context.Context, command Ca
 		if len(healthyBindings) == 0 {
 			return PublicCapability{}, &PublicError{Code: "CAPABILITY_UNAVAILABLE", Message: "该能力当前没有可用上游账号。", HTTPStatus: http.StatusServiceUnavailable}
 		}
-		priceFloor, floorErr := model.GetSearchCapabilityPriceFloor(command.ID)
-		if floorErr != nil {
-			return PublicCapability{}, floorErr
-		}
+		priceFloor := healthySearchBindingsPriceFloor(healthyBindings)
 		if command.PriceMicros < priceFloor {
 			return PublicCapability{}, &PublicError{Code: "CAPABILITY_PRICE_BELOW_COST", Message: "能力售价不能低于上游成本。", HTTPStatus: http.StatusBadRequest}
 		}
@@ -397,7 +432,7 @@ func (control *ControlPlane) ConfigureCapability(ctx context.Context, command Ca
 	if command.Enabled {
 		status = model.SearchCapabilityStatusEnabled
 	}
-	if err := model.ConfigureSearchCapability(command.ID, status, command.PriceMicros); err != nil {
+	if err := model.ConfigureSearchCapability(command.ID, status, command.PriceMicros, command.AvailabilityOverride); err != nil {
 		return PublicCapability{}, err
 	}
 	capability, err = model.GetSearchCapabilityByID(command.ID)

@@ -517,6 +517,9 @@ func listHealthySearchBindingsForCapability(capability *model.SearchCapability) 
 	}
 	healthy := make([]healthySearchBinding, 0, len(bindings))
 	for _, binding := range bindings {
+		if !searchToolAllowed(binding.ToolName) {
+			continue
+		}
 		if !searchBindingMatchesCapabilitySchema(binding, capability) {
 			continue
 		}

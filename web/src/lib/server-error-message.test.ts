@@ -37,6 +37,17 @@ describe('server error message mapping', () => {
     expect(getServerErrorMessageKey({ code: 'UNKNOWN_CODE' })).toBe(null)
   })
 
+  test('maps a bare HTTP 429 response to a localized message key', () => {
+    expect(
+      getServerErrorMessageKey({ response: { status: 429, data: '' } })
+    ).toBe('Too many requests')
+    expect(
+      getServerErrorMessageKey({
+        response: { status: 429, data: { message: 'Please wait 17 seconds' } },
+      })
+    ).toBe(null)
+  })
+
   test('maps stable Telegram bind errors without exposing server text', () => {
     const expected = {
       TELEGRAM_BIND_DISABLED: 'Telegram binding is disabled.',

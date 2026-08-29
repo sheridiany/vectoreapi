@@ -284,7 +284,10 @@ func AdminConfigureSearchCapability(c *gin.Context) {
 		}
 		priceMicros = int64(math.Round(*request.Price * 1_000_000))
 	}
-	result, err := searchControlPlane.ConfigureCapability(c.Request.Context(), vsearch.CapabilityCommand{ID: capability.Id, Enabled: enabled, PriceMicros: priceMicros})
+	result, err := searchControlPlane.ConfigureCapability(c.Request.Context(), vsearch.CapabilityCommand{
+		ID: capability.Id, Enabled: enabled, PriceMicros: priceMicros,
+		AvailabilityOverride: request.Enabled != nil,
+	})
 	if err != nil {
 		common.ApiError(c, err)
 		return

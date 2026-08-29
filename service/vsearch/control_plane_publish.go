@@ -15,6 +15,7 @@ const (
 	PublishSkipNotFound                = "not_found"
 	PublishSkipSchemaUnavailable       = "schema_unavailable"
 	PublishSkipHealthyRouteUnavailable = "healthy_route_unavailable"
+	PublishSkipAdminOverride           = "admin_override"
 )
 
 type PublishCommand struct {
@@ -34,7 +35,11 @@ type PublishResult struct {
 	SkippedServices     []PublishSkippedService `json:"skipped_services"`
 }
 
-func (control *ControlPlane) PublishCatalog(_ context.Context, command PublishCommand) (PublishResult, error) {
+func (control *ControlPlane) PublishCatalog(ctx context.Context, command PublishCommand) (PublishResult, error) {
+	return control.publishCatalog(ctx, command, true, false)
+}
+
+func (control *ControlPlane) publishCatalog(_ context.Context, command PublishCommand, clearGrants, respectAdminOverride bool) (PublishResult, error) {
 	serviceIDs, err := normalizePublishServiceIDs(command.ServiceIDs)
 	if err != nil {
 		return PublishResult{}, err
@@ -92,17 +97,26 @@ func (control *ControlPlane) PublishCatalog(_ context.Context, command PublishCo
 			result.SkippedServices = append(result.SkippedServices, PublishSkippedService{ServiceID: serviceID, Reason: PublishSkipNotFound})
 			continue
 		}
+		if respectAdminOverride && capability.AvailabilitySource == model.SearchCapabilityAvailabilityManual {
+			result.SkippedServices = append(result.SkippedServices, PublishSkippedService{ServiceID: serviceID, Reason: PublishSkipAdminOverride})
+			continue
+		}
 		if _, status := parseCapabilitySchema(capability.InputSchema); capability.SchemaStatus != model.SearchCapabilitySchemaAvailable || status != "available" {
 			result.SkippedServices = append(result.SkippedServices, PublishSkippedService{ServiceID: serviceID, Reason: PublishSkipSchemaUnavailable})
 			continue
 		}
 
-		priceFloor := capability.UpstreamCostMicros
+		priceFloor := int64(0)
 		healthyRoute := false
+		allowedBindingIDs := make([]int, 0, len(bindingsByCapability[capability.Id]))
 		for _, binding := range bindingsByCapability[capability.Id] {
+			if !searchToolAllowed(binding.ToolName) {
+				continue
+			}
 			if !searchBindingMatchesCapabilitySchema(binding, capability) {
 				continue
 			}
+			allowedBindingIDs = append(allowedBindingIDs, binding.Id)
 			account := accountsByID[binding.UpstreamAccountID]
 			if account == nil || account.Status != model.SearchUpstreamAccountStatusHealthy {
 				continue
@@ -123,13 +137,23 @@ func (control *ControlPlane) PublishCatalog(_ context.Context, command PublishCo
 		if capability.PriceMicros > priceFloor {
 			priceFloor = capability.PriceMicros
 		}
-		configs = append(configs, model.SearchCapabilityPublishConfig{
+		config := model.SearchCapabilityPublishConfig{
 			ID: capability.Id, PriceMicros: priceFloor,
 			ExpectedInputSchema: capability.InputSchema, ExpectedSchemaStatus: capability.SchemaStatus,
-		})
+			AllowedBindingIDs: allowedBindingIDs,
+		}
+		if respectAdminOverride {
+			expectedSource := capability.AvailabilitySource
+			config.ExpectedAvailabilitySource = &expectedSource
+			if expectedSource == model.SearchCapabilityAvailabilityLegacyPreserved {
+				adoptedSource := model.SearchCapabilityAvailabilityLegacyAdopted
+				config.ResultAvailabilitySource = &adoptedSource
+			}
+		}
+		configs = append(configs, config)
 		result.PublishedServiceIDs = append(result.PublishedServiceIDs, serviceID)
 	}
-	if err := model.PublishSearchCapabilities(configs, true); err != nil {
+	if err := model.PublishSearchCapabilities(configs, clearGrants); err != nil {
 		if errors.Is(err, model.ErrSearchCapabilityPublishStateChanged) {
 			return PublishResult{}, &PublicError{
 				Code: "CATALOG_PUBLISH_STATE_CHANGED", Message: "vSearch 目录状态已变化，请重新同步后发布。", HTTPStatus: http.StatusConflict,

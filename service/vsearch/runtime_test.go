@@ -837,10 +837,10 @@ func TestExecutionRuntimeAuditsResidualChargeWhenCompensationFails(t *testing.T)
 	assert.Equal(t, capability.PriceMicros, events[0].ChargeMicros, "admin audit must expose a possibly unrecovered charge")
 }
 
-func TestControlPlaneSyncCreatesPublicCapabilityWithoutExposingToolName(t *testing.T) {
+func TestControlPlaneSyncEnablesPublicCapabilityWithoutExposingToolName(t *testing.T) {
 	openRuntimeTestDB(t)
 	connector := &runtimeFakeConnector{
-		findResult:     map[string]any{"content": []any{map[string]any{"type": "text", "text": `{"tools":[{"name":"private/search_news","title":"News Search","description":"Find current news"}]}`}}},
+		findResult:     map[string]any{"content": []any{map[string]any{"type": "text", "text": `{"tools":[{"name":"Firecrawl/search_news","title":"News Search","description":"Find current news"}]}`}}},
 		describeResult: map[string]any{"inputSchema": map[string]any{"type": "object", "properties": map[string]any{"query": map[string]any{"type": "string"}}, "required": []any{"query"}}, "cost": float64(0.2)},
 	}
 	control := NewControlPlane(func(*model.SearchUpstreamAccount, string) (UpstreamConnector, error) { return connector, nil })
@@ -854,13 +854,138 @@ func TestControlPlaneSyncCreatesPublicCapabilityWithoutExposingToolName(t *testi
 	capabilities, err := model.ListSearchCapabilities(true)
 	require.NoError(t, err)
 	require.Len(t, capabilities, 1)
-	assert.Equal(t, model.SearchCapabilityStatusDisabled, capabilities[0].Status, "newly synchronized capabilities require explicit admin enablement")
+	assert.Equal(t, model.SearchCapabilityStatusEnabled, capabilities[0].Status)
+	assert.Equal(t, model.SearchCapabilityAvailabilityUpstream, capabilities[0].AvailabilitySource)
 	assert.Regexp(t, `^vr_svc_[a-f0-9]{16}$`, capabilities[0].PublicID)
-	assert.NotEqual(t, "private/search_news", capabilities[0].Name)
+	assert.NotEqual(t, "Firecrawl/search_news", capabilities[0].Name)
 	bindings, err := model.ListSearchCapabilityBindings(capabilities[0].Id, true)
 	require.NoError(t, err)
 	require.Len(t, bindings, 1)
-	assert.Equal(t, "private/search_news", bindings[0].ToolName)
+	assert.Equal(t, "Firecrawl/search_news", bindings[0].ToolName)
+}
+
+func TestControlPlaneSyncExplicitlyAdoptsLegacyDisabledCapability(t *testing.T) {
+	openRuntimeTestDB(t)
+	connector := &runtimeFakeConnector{
+		findResult: map[string]any{"tools": []any{map[string]any{
+			"name": "Firecrawl/scrape", "title": "Firecrawl", "description": "Scrape a webpage",
+		}}},
+		describeResult: map[string]any{
+			"inputSchema": map[string]any{"type": "object", "properties": map[string]any{"url": map[string]any{"type": "string"}}},
+			"cost":        float64(0.2),
+		},
+	}
+	control := NewControlPlane(func(*model.SearchUpstreamAccount, string) (UpstreamConnector, error) { return connector, nil })
+	account, err := control.SaveAccount(context.Background(), AccountCommand{Name: "primary", Secret: "ak_live_legacy", Status: "healthy"})
+	require.NoError(t, err)
+	publicID, err := model.GenerateSearchCapabilityPublicID("Firecrawl/scrape")
+	require.NoError(t, err)
+	legacy := &model.SearchCapability{
+		PublicID: publicID, Name: "Firecrawl", Category: "抓取", Description: "Scrape a webpage",
+		InputSchema: `{"type":"object","properties":{"url":{"type":"string"}}}`,
+		Status:      model.SearchCapabilityStatusDisabled, AvailabilitySource: model.SearchCapabilityAvailabilityLegacyPreserved,
+		UpstreamCostMicros: 200_000, PriceMicros: 200_000,
+	}
+	require.NoError(t, model.CreateSearchCapability(legacy))
+	require.NoError(t, model.UpsertSearchCapabilityBinding(&model.SearchCapabilityBinding{
+		CapabilityID: legacy.Id, UpstreamAccountID: account.ID, ToolName: "Firecrawl/scrape",
+		InputSchema: legacy.InputSchema, Status: model.SearchCapabilityBindingStatusEnabled,
+		UpstreamCostMicros: 200_000,
+	}))
+
+	result, err := control.SyncCatalog(context.Background(), SyncCommand{Queries: []string{"scrape"}})
+
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.Published)
+	stored, err := model.GetSearchCapabilityByID(legacy.Id)
+	require.NoError(t, err)
+	assert.Equal(t, model.SearchCapabilityStatusEnabled, stored.Status)
+	assert.Equal(t, model.SearchCapabilityAvailabilityLegacyAdopted, stored.AvailabilitySource)
+}
+
+func TestControlPlaneSyncExcludesJustOneAPIFromCatalogAndExecution(t *testing.T) {
+	openRuntimeTestDB(t)
+	connector := &runtimeFakeConnector{
+		findResult: map[string]any{"tools": []any{
+			map[string]any{"name": "Firecrawl/scrape", "title": "Firecrawl", "description": "Scrape a webpage"},
+			map[string]any{"name": "JustOneAPI/getApiYoutubeSearchV1", "title": "YouTube", "description": "Search YouTube"},
+		}},
+		describeResult: map[string]any{
+			"inputSchema": map[string]any{"type": "object", "properties": map[string]any{"query": map[string]any{"type": "string"}}},
+			"cost":        float64(0.2),
+		},
+	}
+	control := NewControlPlane(func(*model.SearchUpstreamAccount, string) (UpstreamConnector, error) { return connector, nil })
+	account, err := control.SaveAccount(context.Background(), AccountCommand{Name: "primary", Secret: "ak_live_direct_only", Status: "healthy"})
+	require.NoError(t, err)
+
+	justOneID, err := model.GenerateSearchCapabilityPublicID("JustOneAPI/getApiYoutubeSearchV1")
+	require.NoError(t, err)
+	justOneCapability := &model.SearchCapability{
+		PublicID: justOneID, Name: "YouTube", Category: "社交媒体", Description: "Search YouTube",
+		InputSchema: `{"type":"object","properties":{"query":{"type":"string"}}}`,
+		Status:      model.SearchCapabilityStatusEnabled, UpstreamCostMicros: 200_000, PriceMicros: 200_000,
+	}
+	require.NoError(t, model.CreateSearchCapability(justOneCapability))
+	require.NoError(t, model.UpsertSearchCapabilityBinding(&model.SearchCapabilityBinding{
+		CapabilityID: justOneCapability.Id, UpstreamAccountID: account.ID,
+		ToolName: "JustOneAPI/getApiYoutubeSearchV1", InputSchema: justOneCapability.InputSchema,
+		Status: model.SearchCapabilityBindingStatusEnabled, UpstreamCostMicros: 200_000,
+	}))
+
+	result, err := control.SyncCatalog(context.Background(), SyncCommand{Queries: []string{"scrape"}})
+	require.NoError(t, err)
+	assert.Equal(t, 1, result.Discovered)
+	assert.Equal(t, 1, result.Synced)
+
+	catalog, err := control.runtime.ListCatalog(context.Background(), Principal{}, true)
+	require.NoError(t, err)
+	require.Len(t, catalog, 1)
+	assert.Equal(t, "Firecrawl", catalog[0].Name)
+	assert.True(t, catalog[0].Enabled)
+
+	healthyBindings, err := listHealthySearchBindingsForCapability(justOneCapability)
+	require.NoError(t, err)
+	assert.Empty(t, healthyBindings)
+}
+
+func TestControlPlaneSyncPreservesManualDisableAndEnterpriseGrants(t *testing.T) {
+	openRuntimeTestDB(t)
+	connector := &runtimeFakeConnector{
+		findResult: map[string]any{"tools": []any{map[string]any{
+			"name": "Firecrawl/scrape", "title": "Firecrawl", "description": "Scrape a webpage",
+		}}},
+		describeResult: map[string]any{
+			"inputSchema": map[string]any{"type": "object", "properties": map[string]any{"url": map[string]any{"type": "string"}}},
+			"cost":        float64(0.2),
+		},
+	}
+	control := NewControlPlane(func(*model.SearchUpstreamAccount, string) (UpstreamConnector, error) { return connector, nil })
+	_, err := control.SaveAccount(context.Background(), AccountCommand{Name: "primary", Secret: "ak_live_grants", Status: "healthy"})
+	require.NoError(t, err)
+
+	_, err = control.SyncCatalog(context.Background(), SyncCommand{Queries: []string{"scrape"}})
+	require.NoError(t, err)
+	capabilities, err := model.ListSearchCapabilities(true)
+	require.NoError(t, err)
+	require.Len(t, capabilities, 1)
+	capability := capabilities[0]
+	require.NoError(t, model.ReplaceSearchCapabilityGrants(capability.Id, []model.SearchCapabilityGrant{{EnterpriseID: 42}}))
+	_, err = control.ConfigureCapability(context.Background(), CapabilityCommand{
+		ID: capability.Id, Enabled: false, PriceMicros: capability.PriceMicros,
+		AvailabilityOverride: true,
+	})
+	require.NoError(t, err)
+
+	_, err = control.SyncCatalog(context.Background(), SyncCommand{Queries: []string{"scrape"}})
+	require.NoError(t, err)
+	capability, err = model.GetSearchCapabilityByID(capability.Id)
+	require.NoError(t, err)
+	assert.Equal(t, model.SearchCapabilityStatusDisabled, capability.Status)
+	grants, err := model.ListSearchCapabilityGrants(capability.Id)
+	require.NoError(t, err)
+	require.Len(t, grants, 1)
+	assert.Equal(t, 42, grants[0].EnterpriseID)
 }
 
 func TestControlPlaneSyncAcceptsAgentKeyDescribeToolContract(t *testing.T) {

@@ -15,6 +15,11 @@ const (
 	SearchCapabilityStatusEnabled  = 1
 	SearchCapabilityStatusDisabled = 2
 
+	SearchCapabilityAvailabilityLegacyPreserved = 0
+	SearchCapabilityAvailabilityUpstream        = 1
+	SearchCapabilityAvailabilityManual          = 2
+	SearchCapabilityAvailabilityLegacyAdopted   = 3
+
 	SearchCapabilitySchemaUnknown     = 0
 	SearchCapabilitySchemaAvailable   = 1
 	SearchCapabilitySchemaUnavailable = 2
@@ -35,6 +40,7 @@ type SearchCapability struct {
 	InputSchema        string         `json:"input_schema,omitempty" gorm:"type:text"`
 	SchemaStatus       int            `json:"schema_status" gorm:"type:int;not null"`
 	Status             int            `json:"status" gorm:"type:int;not null;index"`
+	AvailabilitySource int            `json:"-" gorm:"type:int;not null;default:0"`
 	UpstreamCostMicros int64          `json:"upstream_cost_micros" gorm:"not null"`
 	PriceMicros        int64          `json:"price_micros" gorm:"not null"`
 	LastSyncedAt       int64          `json:"last_synced_at" gorm:"index"`
@@ -104,6 +110,9 @@ func normalizeSearchCapability(capability *SearchCapability) error {
 	if capability.Status != SearchCapabilityStatusEnabled && capability.Status != SearchCapabilityStatusDisabled {
 		return errors.New("search capability status is invalid")
 	}
+	if !validSearchCapabilityAvailabilitySource(capability.AvailabilitySource) {
+		return errors.New("search capability availability source is invalid")
+	}
 	if capability.SchemaStatus == SearchCapabilitySchemaUnknown {
 		if capability.InputSchema == "" {
 			capability.SchemaStatus = SearchCapabilitySchemaUnavailable
@@ -118,6 +127,13 @@ func normalizeSearchCapability(capability *SearchCapability) error {
 		capability.LastSyncedAt = common.GetTimestamp()
 	}
 	return nil
+}
+
+func validSearchCapabilityAvailabilitySource(source int) bool {
+	return source == SearchCapabilityAvailabilityLegacyPreserved ||
+		source == SearchCapabilityAvailabilityUpstream ||
+		source == SearchCapabilityAvailabilityManual ||
+		source == SearchCapabilityAvailabilityLegacyAdopted
 }
 
 func normalizeSearchCapabilityBinding(binding *SearchCapabilityBinding) error {
@@ -170,27 +186,42 @@ func UpsertDiscoveredSearchCapability(capability *SearchCapability) error {
 	}).Create(capability).Error
 }
 
-func ConfigureSearchCapability(id, status int, priceMicros int64) error {
+func ConfigureSearchCapability(id, status int, priceMicros int64, manualAvailability bool) error {
 	if id <= 0 || priceMicros < 0 {
 		return errors.New("search capability configuration is invalid")
 	}
 	if status != SearchCapabilityStatusEnabled && status != SearchCapabilityStatusDisabled {
 		return errors.New("search capability status is invalid")
 	}
-	result := DB.Model(&SearchCapability{}).Where("id = ?", id).Updates(map[string]any{
+	updates := map[string]any{
 		"status":       status,
 		"price_micros": priceMicros,
 		"updated_at":   common.GetTimestamp(),
-	})
+	}
+	if manualAvailability {
+		updates["availability_source"] = SearchCapabilityAvailabilityManual
+	}
+	result := DB.Model(&SearchCapability{}).Where("id = ?", id).Updates(updates)
 	return searchUpdateError(result, &SearchCapability{}, id)
 }
 
 func RefreshSearchCapabilityPriceFloor(id int) error {
+	return refreshSearchCapabilityPriceFloor(id, nil)
+}
+
+func RefreshSearchCapabilityPriceFloorForBindings(id int, allowedBindingIDs []int) error {
+	if len(allowedBindingIDs) == 0 {
+		return errors.New("search capability price floor bindings are invalid")
+	}
+	return refreshSearchCapabilityPriceFloor(id, allowedBindingIDs)
+}
+
+func refreshSearchCapabilityPriceFloor(id int, allowedBindingIDs []int) error {
 	if id <= 0 {
 		return errors.New("search capability id is invalid")
 	}
 	return DB.Transaction(func(tx *gorm.DB) error {
-		priceFloor, err := searchCapabilityPriceFloor(tx, id, true)
+		priceFloor, err := searchCapabilityPriceFloor(tx, id, true, allowedBindingIDs)
 		if err != nil {
 			return err
 		}
@@ -223,10 +254,10 @@ func GetSearchCapabilityPriceFloor(id int) (int64, error) {
 	if id <= 0 {
 		return 0, errors.New("search capability id is invalid")
 	}
-	return searchCapabilityPriceFloor(DB, id, false)
+	return searchCapabilityPriceFloor(DB, id, false, nil)
 }
 
-func searchCapabilityPriceFloor(tx *gorm.DB, id int, lockRows bool) (int64, error) {
+func searchCapabilityPriceFloor(tx *gorm.DB, id int, lockRows bool, allowedBindingIDs []int) (int64, error) {
 	capability := SearchCapability{}
 	capabilityQuery := tx.Select("id", "input_schema").Where("id = ?", id)
 	if lockRows {
@@ -240,6 +271,9 @@ func searchCapabilityPriceFloor(tx *gorm.DB, id int, lockRows bool) (int64, erro
 	bindingQuery := tx.Select("id", "input_schema", "upstream_cost_micros").
 		Where("capability_id = ? AND status = ?", id, SearchCapabilityBindingStatusEnabled).
 		Order("id asc")
+	if len(allowedBindingIDs) > 0 {
+		bindingQuery = bindingQuery.Where("id IN ?", allowedBindingIDs)
+	}
 	if lockRows {
 		bindingQuery = lockForUpdate(bindingQuery)
 	}
