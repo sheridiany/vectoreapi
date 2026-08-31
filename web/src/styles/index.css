@@ -309,6 +309,11 @@ For commercial licensing, please contact support@quantumnous.com
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  color: #c87326;
+}
+
+.dark .home-logo-marquee__mark {
+  color: #f4b56b;
 }
 
 .home-logo-marquee:hover .home-logo-marquee__track {
@@ -794,6 +799,106 @@ For commercial licensing, please contact support@quantumnous.com
 
 @media (prefers-reduced-motion: reduce) {
   .auto-group-flow-border {
+    display: none;
+  }
+}
+
+/* ── Homepage vSearch platform rails ── */
+@keyframes home-vsearch-platform-left {
+  to {
+    transform: translateX(calc(-50% - 0.5rem));
+  }
+}
+
+@keyframes home-vsearch-platform-right {
+  from {
+    transform: translateX(calc(-50% - 0.5rem));
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+.home-vsearch-platform-viewport {
+  overflow: hidden;
+  mask-image: linear-gradient(
+    to right,
+    transparent,
+    black 5%,
+    black 95%,
+    transparent
+  );
+}
+
+.home-vsearch-platform-track {
+  display: flex;
+  width: max-content;
+  gap: 1rem;
+  will-change: transform;
+}
+
+.home-vsearch-platform-track--left {
+  animation: home-vsearch-platform-left 52s linear infinite;
+}
+
+.home-vsearch-platform-track--right {
+  animation: home-vsearch-platform-right 56s linear infinite;
+}
+
+.home-vsearch-platform-set {
+  display: flex;
+  gap: 1rem;
+}
+
+.home-vsearch-platform-card {
+  width: clamp(17.5rem, 24vw, 22rem);
+  flex: none;
+  border: 1px solid rgb(216 209 196 / 0.86);
+  border-radius: 1.25rem;
+  background: rgb(251 250 247 / 0.92);
+  padding: 1.25rem;
+  box-shadow: 0 12px 42px rgb(91 69 38 / 0.055);
+  cursor: default;
+}
+
+.home-vsearch-platform-logo {
+  display: flex;
+  width: 2.75rem;
+  height: 2.75rem;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgb(216 209 196 / 0.78);
+  border-radius: 0.8rem;
+  background: #f3efe8;
+  color: #2b251f;
+}
+
+.dark .home-vsearch-platform-card {
+  border-color: rgb(255 255 255 / 0.1);
+  background: rgb(23 23 20 / 0.94);
+  box-shadow: none;
+}
+
+.dark .home-vsearch-platform-logo {
+  border-color: rgb(255 255 255 / 0.1);
+  background: rgb(255 255 255 / 0.055);
+  color: #f5f1e9;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .home-vsearch-platform-viewport {
+    overflow-x: auto;
+    mask-image: none;
+    scrollbar-width: none;
+  }
+
+  .home-vsearch-platform-track {
+    animation: none;
+    will-change: auto;
+  }
+
+  .home-vsearch-platform-set[aria-hidden='true'] {
     display: none;
   }
 }

@@ -2,13 +2,8 @@ package controller
 
 import (
 	"errors"
-	"net"
 	"net/http"
-	"net/url"
-	"os"
 	"strconv"
-	"strings"
-	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
@@ -25,20 +20,6 @@ type adminSearchAgentKeyRequest struct {
 	UserID int      `json:"user_id"`
 	Name   string   `json:"name"`
 	Scopes []string `json:"scopes"`
-}
-
-type searchAgentInstallRequest struct {
-	Token string `json:"token"`
-	Label string `json:"label"`
-}
-
-type searchAgentActivationRequest struct {
-	Token string `json:"token"`
-}
-
-type searchAgentInstallPayload struct {
-	KeyID             int `json:"key_id"`
-	CredentialVersion int `json:"credential_version"`
 }
 
 type searchAgentKeyResponse struct {
@@ -153,166 +134,6 @@ func RevokeSearchAgentKey(c *gin.Context) {
 		return
 	}
 	common.ApiSuccess(c, nil)
-}
-
-func CreateSearchAgentKeyInstallToken(c *gin.Context) {
-	createSearchAgentKeyInstallToken(c, false)
-}
-
-// AdminCreateSearchAgentKeyInstallToken issues an install token for a key in
-// the enterprise managed by the authenticated search administrator.
-func AdminCreateSearchAgentKeyInstallToken(c *gin.Context) {
-	createSearchAgentKeyInstallToken(c, true)
-}
-
-func createSearchAgentKeyInstallToken(c *gin.Context, allowManagedKey bool) {
-	id, err := strconv.Atoi(c.Param("id"))
-	if err != nil {
-		common.ApiError(c, errors.New("search agent key id is invalid"))
-		return
-	}
-	key, err := model.GetSearchAgentKeyByID(id)
-	if err != nil {
-		common.ApiError(c, err)
-		return
-	}
-	if key.UserId != c.GetInt("id") {
-		if !allowManagedKey {
-			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"success": false, "message": "only the key owner can create an install token"})
-			return
-		}
-		if c.GetInt("role") < common.RoleRootUser {
-			if enterpriseID := c.GetInt("enterprise_id"); enterpriseID == 0 || key.EnterpriseID != enterpriseID {
-				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"success": false, "message": "key is outside the managed enterprise"})
-				return
-			}
-		}
-	}
-	if key.Status != model.SearchAgentKeyStatusActive || (key.ExpiresAt > 0 && key.ExpiresAt <= common.GetTimestamp()) {
-		common.ApiError(c, errors.New("search agent key is not active"))
-		return
-	}
-	payload, err := common.Marshal(searchAgentInstallPayload{KeyID: key.Id, CredentialVersion: key.CredentialVersion})
-	if err != nil {
-		common.ApiError(c, err)
-		return
-	}
-	token, flow, err := model.CreateAuthFlow(model.AuthFlowCreate{
-		Purpose:   model.AuthFlowPurposeSearchAgentInstall,
-		UserId:    key.UserId,
-		Payload:   string(payload),
-		ExpiresAt: time.Now().Add(15 * time.Minute),
-	})
-	if err != nil {
-		common.ApiError(c, err)
-		return
-	}
-	common.ApiSuccess(c, gin.H{
-		"token":      "vr_search_install_" + token,
-		"expires_at": flow.ExpiresAt.Unix(),
-	})
-}
-
-// InstallSearchAgent prepares a pending credential while the current key stays
-// active. The installer activates it only after every local config is durable.
-func InstallSearchAgent(c *gin.Context) {
-	var request searchAgentInstallRequest
-	if err := c.ShouldBindJSON(&request); err != nil {
-		common.ApiError(c, errors.New("install token is required"))
-		return
-	}
-	token := strings.TrimSpace(request.Token)
-	token = strings.TrimPrefix(token, "vr_search_install_")
-	if token == "" {
-		common.ApiError(c, errors.New("install token is required"))
-		return
-	}
-	mcpURL := searchPublicMCPURL(c)
-	if mcpURL == "" {
-		common.ApiError(c, errors.New("vSearch public MCP URL must use HTTPS; loopback development may use HTTP"))
-		return
-	}
-	var secret string
-	var activationToken string
-	installedKeyID := 0
-	_, err := model.ConsumeAuthFlowWithAction(token, model.AuthFlowMatch{
-		Purpose: model.AuthFlowPurposeSearchAgentInstall,
-	}, func(tx *gorm.DB, flow *model.AuthFlow) error {
-		var payload searchAgentInstallPayload
-		if err := common.Unmarshal([]byte(flow.Payload), &payload); err != nil || payload.KeyID <= 0 {
-			return errors.New("install token payload is invalid")
-		}
-		installedKeyID = payload.KeyID
-		var prepareErr error
-		secret, activationToken, prepareErr = model.PrepareSearchAgentKeyRotationWithTx(tx, payload.KeyID, payload.CredentialVersion, time.Now().Add(10*time.Minute))
-		return prepareErr
-	})
-	if err != nil {
-		common.ApiError(c, err)
-		return
-	}
-	if secret == "" || activationToken == "" {
-		common.ApiError(c, errors.New("install token did not produce a key"))
-		return
-	}
-	common.ApiSuccess(c, gin.H{
-		"secret":           secret,
-		"activation_token": "vr_search_activate_" + activationToken,
-		"label":            strings.TrimSpace(request.Label),
-		"mcp_url":          mcpURL,
-		"mcpUrl":           mcpURL,
-		"key_id":           installedKeyID,
-		"installed":        false,
-	})
-}
-
-func ActivateSearchAgentInstall(c *gin.Context) {
-	var request searchAgentActivationRequest
-	if err := c.ShouldBindJSON(&request); err != nil {
-		common.ApiError(c, errors.New("activation token is required"))
-		return
-	}
-	token := strings.TrimPrefix(strings.TrimSpace(request.Token), "vr_search_activate_")
-	if token == "" {
-		common.ApiError(c, errors.New("activation token is required"))
-		return
-	}
-	keyID, err := model.ActivatePreparedSearchAgentKeyRotation(token)
-	if err != nil {
-		common.ApiError(c, err)
-		return
-	}
-	common.ApiSuccess(c, gin.H{"key_id": keyID, "installed": true})
-}
-
-func searchPublicMCPURL(c *gin.Context) string {
-	if configured := strings.TrimSpace(os.Getenv("VSEARCH_PUBLIC_MCP_URL")); configured != "" {
-		if strings.Contains(configured, "#") {
-			return ""
-		}
-		if parsed, err := url.ParseRequestURI(configured); err == nil && parsed.Host != "" && parsed.User == nil && parsed.RawQuery == "" && parsed.Fragment == "" {
-			hostname := parsed.Hostname()
-			ip := net.ParseIP(hostname)
-			loopback := strings.EqualFold(hostname, "localhost") || (ip != nil && ip.IsLoopback())
-			if strings.EqualFold(parsed.Scheme, "https") || (strings.EqualFold(parsed.Scheme, "http") && loopback) {
-				return strings.TrimRight(parsed.String(), "/")
-			}
-		}
-		return ""
-	}
-	requestURL := &url.URL{Scheme: "http", Host: c.Request.Host}
-	hostname := requestURL.Hostname()
-	ip := net.ParseIP(hostname)
-	if !strings.EqualFold(hostname, "localhost") && (ip == nil || !ip.IsLoopback()) {
-		return ""
-	}
-	protocol := "http"
-	if c.Request.TLS != nil {
-		protocol = "https"
-	} else if forwarded := strings.ToLower(strings.TrimSpace(strings.Split(c.GetHeader("X-Forwarded-Proto"), ",")[0])); forwarded == "http" || forwarded == "https" {
-		protocol = forwarded
-	}
-	return protocol + "://" + c.Request.Host + "/v1/mcp"
 }
 
 func AdminGetSearchAgentKeys(c *gin.Context) {

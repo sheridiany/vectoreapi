@@ -36,11 +36,6 @@ export type CreatedSearchAgentKey = SearchAgentKeyApiRecord & {
   secret: string
 }
 
-export type SearchInstallToken = {
-  token: string
-  expires_at: number
-}
-
 type ApiResponse<T> = { success: boolean; message?: string; data?: T }
 
 export type SearchCatalogStatus =
@@ -251,18 +246,6 @@ export async function revokeSearchAgentKey(id: number): Promise<void> {
   if (!response.data.success) {
     throw new Error(response.data.message || 'Request failed')
   }
-}
-
-export async function createSearchInstallToken(
-  id: number
-): Promise<SearchInstallToken> {
-  const response = await api.post<ApiResponse<SearchInstallToken>>(
-    `/api/search/keys/${id}/install-token`
-  )
-  if (!response.data.success || !response.data.data) {
-    throw new Error(response.data.message || 'Request failed')
-  }
-  return response.data.data
 }
 
 export async function fetchSearchCatalog(): Promise<SearchCatalogItem[]> {

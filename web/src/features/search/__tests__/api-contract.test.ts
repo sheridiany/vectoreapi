@@ -12,7 +12,6 @@ import { api } from '@/lib/api'
 
 import {
   createSearchAgentKey,
-  createSearchInstallToken,
   createSearchUpstreamAccount,
   deleteSearchUpstreamAccount,
   fetchSearchAgentKeys,
@@ -74,24 +73,16 @@ describe('vSearch frontend API contract', () => {
     vi.mocked(api.get).mockResolvedValue({
       data: { success: true, data: [] },
     })
-    vi.mocked(api.post)
-      .mockResolvedValueOnce({
-        data: {
-          success: true,
-          data: { id: 9, user_id: 3, secret: 'vr_live_secret' },
-        },
-      })
-      .mockResolvedValueOnce({
-        data: {
-          success: true,
-          data: { token: 'vr_search_install_test', expires_at: 2 },
-        },
-      })
+    vi.mocked(api.post).mockResolvedValueOnce({
+      data: {
+        success: true,
+        data: { id: 9, user_id: 3, secret: 'vr_live_secret' },
+      },
+    })
     vi.mocked(api.delete).mockResolvedValue({ data: { success: true } })
 
     await fetchSearchAgentKeys()
     await createSearchAgentKey('research-bot', ['web-search'])
-    await createSearchInstallToken(9)
     await revokeSearchAgentKey(9)
 
     expect(api.get).toHaveBeenCalledWith('/api/search/keys')
@@ -99,10 +90,7 @@ describe('vSearch frontend API contract', () => {
       name: 'research-bot',
       scopes: ['web-search'],
     })
-    expect(api.post).toHaveBeenNthCalledWith(
-      2,
-      '/api/search/keys/9/install-token'
-    )
+    expect(api.post).toHaveBeenCalledTimes(1)
     expect(api.delete).toHaveBeenCalledWith('/api/search/keys/9')
   })
 

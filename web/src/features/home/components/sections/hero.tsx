@@ -24,27 +24,27 @@ const PROVIDER_ROWS = [
     direction: 'left',
     items: [
       { label: 'Anthropic', icon: 'Anthropic' },
-      { label: 'Home provider qwen', icon: 'Qwen' },
-      { label: 'DeepSeek', icon: 'DeepSeek' },
-      { label: 'Google Gemini', icon: 'Gemini' },
-      { label: 'MiniMax', icon: 'Minimax' },
-      { label: 'Kimi', icon: 'Kimi' },
+      { label: 'Home provider qwen', icon: 'Qwen.Color' },
+      { label: 'DeepSeek', icon: 'DeepSeek.Color' },
+      { label: 'Google Gemini', icon: 'Gemini.Color' },
+      { label: 'MiniMax', icon: 'Minimax.Color' },
+      { label: 'Kimi', icon: 'Kimi.Color' },
       { label: 'OpenAI', icon: 'OpenAI' },
       { label: 'Home provider xiaomi mimo', icon: 'XiaomiMiMo' },
-      { label: 'Home provider zhipu', icon: 'Zhipu' },
+      { label: 'Home provider zhipu', icon: 'Zhipu.Color' },
     ],
   },
   {
     direction: 'right',
     items: [
-      { label: 'Cherry Studio', icon: 'CherryStudio' },
+      { label: 'Cherry Studio', icon: 'CherryStudio.Color' },
       { label: 'ClackyAI', icon: 'ClackyAI' },
       { label: 'Cline', icon: 'Cline' },
-      { label: 'Codex', icon: 'Codex' },
+      { label: 'Codex', icon: 'Codex.Color' },
       { label: 'Grok', icon: 'Grok' },
       { label: 'Mastra', icon: 'Mastra' },
-      { label: 'Obsidian', icon: 'Obsidian' },
-      { label: 'OpenRouter', icon: 'OpenRouter' },
+      { label: 'Obsidian', icon: 'Obsidian.Color' },
+      { label: 'OpenRouter', icon: 'OpenRouter.Color' },
     ],
   },
 ]
@@ -172,10 +172,10 @@ export function Hero(props: HeroProps) {
                       {items.map(({ label, icon }) => (
                         <span
                           key={`${direction}-${copy}-${label}`}
-                          className='home-logo-marquee__item flex items-center gap-2 text-sm font-semibold tracking-tight whitespace-nowrap'
+                          className='home-logo-marquee__item flex items-center gap-3 text-base font-semibold tracking-tight whitespace-nowrap'
                         >
-                          <span className='home-logo-marquee__mark opacity-60 grayscale transition-opacity duration-200 hover:opacity-100'>
-                            {getLobeIcon(icon, 34)}
+                          <span className='home-logo-marquee__mark opacity-85 transition-opacity duration-200 hover:opacity-100'>
+                            {getLobeIcon(icon, 42)}
                           </span>
                           {t(label)}
                         </span>

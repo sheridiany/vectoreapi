@@ -19,6 +19,7 @@ type WebAssets struct {
 	IndexPage  []byte
 	InstallSh  []byte
 	InstallPs1 []byte
+	InstallMjs []byte
 }
 
 func SetWebRouter(router *gin.Engine, assets WebAssets) {
@@ -33,6 +34,9 @@ func SetWebRouter(router *gin.Engine, assets WebAssets) {
 	})
 	router.GET("/install.ps1", func(c *gin.Context) {
 		c.Data(http.StatusOK, "text/plain; charset=utf-8", assets.InstallPs1)
+	})
+	router.GET("/install.mjs", func(c *gin.Context) {
+		c.Data(http.StatusOK, "text/javascript; charset=utf-8", assets.InstallMjs)
 	})
 	router.NoRoute(func(c *gin.Context) {
 		c.Set(middleware.RouteTagKey, "web")

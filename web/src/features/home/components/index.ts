@@ -18,3 +18,4 @@ For commercial licensing, please contact support@quantumnous.com
 */
 export { CTA } from './sections/cta'
 export { Hero } from './sections/hero'
+export { VSearchCapabilities } from './sections/vsearch-capabilities'

@@ -318,9 +318,6 @@ func migrateDB() error {
 	if err := finalizeSubscriptionQuotaVersionMigration(subscriptionQuotaVersionState); err != nil {
 		return err
 	}
-	if err := InitializeSearchAgentKeyCredentialVersions(); err != nil {
-		return err
-	}
 	if err := InitializeUserAuthVersions(); err != nil {
 		return err
 	}
@@ -422,9 +419,6 @@ func migrateDBFast() error {
 		return err
 	}
 	if err := finalizeSubscriptionQuotaVersionMigration(subscriptionQuotaVersionState); err != nil {
-		return err
-	}
-	if err := InitializeSearchAgentKeyCredentialVersions(); err != nil {
 		return err
 	}
 	if err := InitializeUserAuthVersions(); err != nil {

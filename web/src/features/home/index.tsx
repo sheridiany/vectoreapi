@@ -25,7 +25,7 @@ import { useTheme } from '@/context/theme-provider'
 import { isLikelyHtml } from '@/lib/content-format'
 import { useAuthStore } from '@/stores/auth-store'
 
-import { CTA, Hero } from './components'
+import { CTA, Hero, VSearchCapabilities } from './components'
 import { useHomePageContent } from './hooks'
 
 const HOME_NAV_LINKS: TopNavLink[] = [
@@ -138,6 +138,7 @@ export function Home() {
     >
       <div className='bg-[#f6f6f5] font-sans text-[#1f1b17] dark:bg-[#11110f] dark:text-[#f5f1e9]'>
         <Hero isAuthenticated={isAuthenticated} />
+        <VSearchCapabilities />
         <CTA isAuthenticated={isAuthenticated} />
       </div>
     </PublicLayout>

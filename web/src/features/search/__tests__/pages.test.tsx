@@ -11,18 +11,12 @@ import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
-import {
-  createSearchAgentKey,
-  createSearchInstallToken,
-  fetchSearchAgentKeys,
-  revokeSearchAgentKey,
-} from '../api'
+import { createSearchAgentKey, fetchSearchAgentKeys } from '../api'
 import { SearchKeysPage } from '../search-keys-page'
 
 vi.mock('../api', () => ({
   fetchSearchAgentKeys: vi.fn().mockResolvedValue([]),
   createSearchAgentKey: vi.fn(),
-  createSearchInstallToken: vi.fn(),
   revokeSearchAgentKey: vi.fn(),
 }))
 
@@ -121,44 +115,38 @@ describe('vSearch key page', () => {
     )
   })
 
-  test('generates a one-time install command for an active key', async () => {
-    vi.mocked(fetchSearchAgentKeys).mockResolvedValueOnce([
-      {
-        id: 12,
-        user_id: 7,
-        enterprise_id: 0,
-        label: 'research-bot',
-        prefix: 'vr_live_user',
-        status: 'active',
-        scopes: ['web-search'],
-        created_at: 1,
-      },
-    ])
-    vi.mocked(createSearchInstallToken).mockResolvedValueOnce({
-      token: 'vr_search_install_once',
-      expires_at: 999,
+  test('generates an install command with the newly created key', async () => {
+    vi.mocked(createSearchAgentKey).mockResolvedValueOnce({
+      id: 12,
+      user_id: 7,
+      enterprise_id: 0,
+      label: 'research-bot',
+      prefix: 'vr_live_user',
+      status: 'active',
+      scopes: ['web-search'],
+      created_at: 1,
+      secret: 'vr_live_user_secret',
     })
     const user = userEvent.setup()
     renderWithQuery(<SearchKeysPage />)
 
-    await screen.findByText('research-bot')
+    await screen.findByText('No vSearch keys yet')
+    await user.type(screen.getByLabelText('Key name'), 'research-bot')
+    await user.click(screen.getByRole('button', { name: 'Create vSearch key' }))
     await user.click(screen.getByRole('button', { name: 'macOS / Linux' }))
 
-    expect(createSearchInstallToken).toHaveBeenCalledWith(12)
     expect(await screen.findByText(/curl -fsSL/)).toHaveTextContent(
-      'vr_search_install_once'
+      "--key 'vr_live_user_secret'"
     )
-    expect(screen.getByText(/15 minutes/)).toBeInTheDocument()
-    expect(screen.getByText('Key name:')).toBeInTheDocument()
-    expect(screen.getAllByText('research-bot').length).toBeGreaterThan(1)
+    expect(screen.getByText(/Uses the same vSearch key/)).toBeInTheDocument()
     expect(
       screen.getByText(
-        'Running this command rotates this vSearch key in place. The previous key stops working immediately.'
+        'The installer keeps this key unchanged and can be run again on another device.'
       )
     ).toBeInTheDocument()
   })
 
-  test('does not offer install commands for disabled or revoked keys', async () => {
+  test('does not offer install commands for previously created keys', async () => {
     vi.mocked(fetchSearchAgentKeys).mockResolvedValueOnce([
       {
         id: 12,
@@ -204,41 +192,5 @@ describe('vSearch key page', () => {
     expect(
       within(revokedRow).queryByRole('button', { name: 'macOS / Linux' })
     ).not.toBeInTheDocument()
-  })
-
-  test('removes a generated install command when its key is revoked', async () => {
-    vi.mocked(fetchSearchAgentKeys).mockResolvedValueOnce([
-      {
-        id: 12,
-        user_id: 7,
-        enterprise_id: 0,
-        label: 'research-bot',
-        prefix: 'vr_live_user',
-        status: 'active',
-        scopes: ['web-search'],
-        created_at: 1,
-      },
-    ])
-    vi.mocked(createSearchInstallToken).mockResolvedValueOnce({
-      token: 'vr_search_install_once',
-      expires_at: 999,
-    })
-    vi.mocked(revokeSearchAgentKey).mockResolvedValueOnce()
-    const user = userEvent.setup()
-    renderWithQuery(<SearchKeysPage />)
-
-    await screen.findByText('research-bot')
-    await user.click(screen.getByRole('button', { name: 'macOS / Linux' }))
-    expect(await screen.findByText(/curl -fsSL/)).toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'Revoke key' }))
-    const confirmRevoke = screen
-      .getAllByRole('button', { name: 'Revoke key' })
-      .at(-1)
-    expect(confirmRevoke).toBeDefined()
-    if (!confirmRevoke) return
-    await user.click(confirmRevoke)
-
-    expect(vi.mocked(revokeSearchAgentKey).mock.calls.at(-1)?.[0]).toBe(12)
-    expect(screen.queryByText(/curl -fsSL/)).not.toBeInTheDocument()
   })
 })
