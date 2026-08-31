@@ -258,6 +258,31 @@ export const STATIC_I18N_KEYS = [
 
   // Subscription constants (dynamic labelKey)
   'years',
+
+  // Public product landing navigation and mapped labels
+  'API Gateway',
+  'vSearch',
+  'vSearch capability catalog',
+  'Pricing',
+  'Home nav capabilities',
+  'Home nav providers',
+  'Home nav models',
+  'Home capability unified api',
+  'Home capability provider routing',
+  'Home capability model mapping',
+  'Home capability traffic visibility',
+  'API capability unified ingress title',
+  'API capability unified ingress description',
+  'API capability unified ingress detail',
+  'API capability routing title',
+  'API capability routing description',
+  'API capability routing detail',
+  'API capability observability title',
+  'API capability observability description',
+  'API capability observability detail',
+  'API telemetry latency',
+  'API telemetry tokens',
+  'API telemetry cost',
   'months',
   'days',
   'hours',
@@ -627,6 +652,9 @@ export const STATIC_I18N_KEYS = [
   'Enterprise managers can manage vSearch access without seeing upstream provider secrets. Platform administrators can additionally configure connectors and routing.',
   'Enterprise vSearch keys',
   'Review and revoke vSearch credentials within your enterprise.',
+  'Settled by admin',
+  'Refunded by admin',
+  'Operator note must be 255 characters or fewer',
   'Looking for model credentials?',
   'Open model API Keys',
   'AgentKeys',
@@ -720,4 +748,5 @@ export const STATIC_I18N_KEYS = [
   'Error code',
   'Indeterminate',
   'Running this command rotates this vSearch key in place. The previous key stops working immediately.',
+
 ] as const

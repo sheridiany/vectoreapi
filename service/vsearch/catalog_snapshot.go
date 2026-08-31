@@ -3,12 +3,13 @@ package vsearch
 import "github.com/QuantumNous/new-api/model"
 
 type catalogSnapshotItem struct {
-	capability *model.SearchCapability
-	bindings   []*model.SearchCapabilityBinding
-	public     PublicCapability
+	capability        *model.SearchCapability
+	declaredBindings  []*model.SearchCapabilityBinding
+	availableBindings []*model.SearchCapabilityBinding
+	public            PublicCapability
 }
 
-func loadCatalogSnapshot(principal Principal, includeDisabled bool) ([]catalogSnapshotItem, error) {
+func loadCatalogSnapshot(principal Principal, includeDisabled, enforceAccess bool) ([]catalogSnapshotItem, error) {
 	capabilities, err := model.ListSearchCapabilities(includeDisabled)
 	if err != nil {
 		return nil, err
@@ -33,7 +34,7 @@ func loadCatalogSnapshot(principal Principal, includeDisabled bool) ([]catalogSn
 		return nil, err
 	}
 	grants := make([]*model.SearchCapabilityGrant, 0)
-	if !includeDisabled {
+	if enforceAccess {
 		grants, err = model.ListSearchCapabilityGrantsForCapabilities(capabilityIDs)
 		if err != nil {
 			return nil, err
@@ -66,7 +67,7 @@ func loadCatalogSnapshot(principal Principal, includeDisabled bool) ([]catalogSn
 
 	result := make([]catalogSnapshotItem, 0, len(capabilities))
 	for _, capability := range capabilities {
-		if !includeDisabled {
+		if enforceAccess {
 			_, restricted := restrictedCapabilities[capability.Id]
 			_, granted := grantedCapabilities[capability.Id]
 			if (restricted && !granted) || !principalAllowsCategory(principal, capability.Category) {
@@ -74,13 +75,20 @@ func loadCatalogSnapshot(principal Principal, includeDisabled bool) ([]catalogSn
 			}
 		}
 		allCapabilityBindings := bindingsByCapability[capability.Id]
-		capabilityBindings := make([]*model.SearchCapabilityBinding, 0, len(allCapabilityBindings))
+		declaredBindings := make([]*model.SearchCapabilityBinding, 0, len(allCapabilityBindings))
 		for _, binding := range allCapabilityBindings {
-			if searchToolAllowed(binding.ToolName) {
+			if binding.Status == model.SearchCapabilityBindingStatusEnabled {
+				declaredBindings = append(declaredBindings, binding)
+			}
+		}
+		capabilityBindings := make([]*model.SearchCapabilityBinding, 0, len(declaredBindings))
+		for _, binding := range declaredBindings {
+			account := accountsByID[binding.UpstreamAccountID]
+			if searchToolAllowed(binding.ToolName) && (account == nil || account.Provider != model.SearchUpstreamProviderJustOneAPI) {
 				capabilityBindings = append(capabilityBindings, binding)
 			}
 		}
-		if len(allCapabilityBindings) > 0 && len(capabilityBindings) == 0 {
+		if !includeDisabled && len(declaredBindings) > 0 && len(capabilityBindings) == 0 {
 			continue
 		}
 		_, parsedSchemaStatus := parseCapabilitySchema(capability.InputSchema)
@@ -88,10 +96,23 @@ func loadCatalogSnapshot(principal Principal, includeDisabled bool) ([]catalogSn
 		if capability.SchemaStatus == model.SearchCapabilitySchemaAvailable && parsedSchemaStatus == "available" {
 			schemaStatus = "available"
 		}
-		healthyRouteCount := int64(0)
+		contractStatus := "verified"
+		if capability.ContractVersion != "legacy-v1" {
+			contractStatus = "unverified"
+			for _, binding := range capabilityBindings {
+				if binding.Status == model.SearchCapabilityBindingStatusEnabled && binding.ContractEquivalent {
+					contractStatus = "verified"
+					break
+				}
+			}
+		}
+		healthyBindings := make([]*model.SearchCapabilityBinding, 0, len(capabilityBindings))
 		healthyRouteCostFloor := int64(0)
 		for _, binding := range capabilityBindings {
 			if binding.Status != model.SearchCapabilityBindingStatusEnabled {
+				continue
+			}
+			if !model.IsSearchCapabilityBindingExecutable(capability.ContractVersion, binding) {
 				continue
 			}
 			if !searchBindingMatchesCapabilitySchema(binding, capability) {
@@ -103,12 +124,13 @@ func loadCatalogSnapshot(principal Principal, includeDisabled bool) ([]catalogSn
 			}
 			pool := poolsByID[account.PoolID]
 			if pool != nil && pool.Status == model.SearchUpstreamPoolStatusEnabled {
-				healthyRouteCount++
+				healthyBindings = append(healthyBindings, binding)
 				if binding.UpstreamCostMicros > healthyRouteCostFloor {
 					healthyRouteCostFloor = binding.UpstreamCostMicros
 				}
 			}
 		}
+		healthyRouteCount := int64(len(healthyBindings))
 		pricingAvailable := capability.PriceMicros >= healthyRouteCostFloor
 		interfaceCount := int64(0)
 		if healthyRouteCount > 0 && schemaStatus == "available" && pricingAvailable {
@@ -123,7 +145,7 @@ func loadCatalogSnapshot(principal Principal, includeDisabled bool) ([]catalogSn
 		}
 		public := PublicCapability{
 			ID: capability.PublicID, Name: capability.Name, Category: capability.Category,
-			Description: capability.Description, SchemaStatus: schemaStatus, Status: status,
+			Description: capability.Description, SchemaStatus: schemaStatus, ContractStatus: contractStatus, Status: status,
 			Enabled:        capability.Status == model.SearchCapabilityStatusEnabled && healthyRouteCount > 0 && schemaStatus == "available" && pricingAvailable,
 			InterfaceCount: interfaceCount, CostLabel: formatMicros(capability.PriceMicros),
 			Price: float64(capability.PriceMicros) / 1_000_000, PriceMicros: capability.PriceMicros,
@@ -135,11 +157,21 @@ func loadCatalogSnapshot(principal Principal, includeDisabled bool) ([]catalogSn
 			public.UpstreamCost = &upstreamCost
 			public.UpstreamCostMicros = capability.UpstreamCostMicros
 		}
-		result = append(result, catalogSnapshotItem{capability: capability, bindings: capabilityBindings, public: public})
+		availableBindings := make([]*model.SearchCapabilityBinding, 0, len(healthyBindings))
+		if public.Enabled {
+			availableBindings = append(availableBindings, healthyBindings...)
+		}
+		result = append(result, catalogSnapshotItem{
+			capability: capability, declaredBindings: declaredBindings,
+			availableBindings: availableBindings, public: public,
+		})
 	}
 	return result, nil
 }
 
 func searchBindingMatchesCapabilitySchema(binding *model.SearchCapabilityBinding, capability *model.SearchCapability) bool {
-	return binding != nil && capability != nil && binding.InputSchema == capability.InputSchema
+	if binding == nil || capability == nil || binding.InputSchema != capability.InputSchema {
+		return false
+	}
+	return capability.ContractVersion == "legacy-v1" || binding.OutputSchema == capability.OutputSchema
 }

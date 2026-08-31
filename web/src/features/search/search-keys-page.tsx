@@ -370,8 +370,8 @@ export function SearchKeysPage() {
                   value={createdSecret}
                   variant='outline'
                   size='sm'
-                  tooltip={t('Copy AgentKey secret')}
-                  successTooltip={t('AgentKey secret copied')}
+                  tooltip={t('Copy vSearch key')}
+                  successTooltip={t('vSearch key copied')}
                 >
                   {t('Copy')}
                 </CopyButton>
@@ -438,10 +438,7 @@ export function SearchKeysPage() {
             </div>
             <dl className='mt-4 space-y-3 text-sm'>
               <Definition label={t('Step 1')} value={t('Create a key')} />
-              <Definition
-                label={t('Step 2')}
-                value={t('Copy AgentKey secret')}
-              />
+              <Definition label={t('Step 2')} value={t('Copy vSearch key')} />
               <Definition
                 label={t('Step 3')}
                 value={t('Call a vSearch capability')}
@@ -498,10 +495,10 @@ export function SearchKeysPage() {
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>{t('Revoke AgentKey?')}</AlertDialogTitle>
+            <AlertDialogTitle>{t('Revoke vSearch key?')}</AlertDialogTitle>
             <AlertDialogDescription>
               {t(
-                'Requests using this AgentKey will stop working immediately. This action cannot be undone.'
+                'Requests using this vSearch key will stop working immediately. This action cannot be undone.'
               )}
             </AlertDialogDescription>
           </AlertDialogHeader>

@@ -22,7 +22,7 @@ import {
   Trash2,
 } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
-import { useForm, type UseFormReturn } from 'react-hook-form'
+import { Controller, useForm, type UseFormReturn } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -63,6 +63,14 @@ import {
   FieldLabel,
 } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
   Table,
@@ -84,12 +92,14 @@ import {
 } from '../api'
 import {
   createUpstreamAccountSchema,
+  getUpstreamProviderDefaultURL,
   getUpstreamAccountServerFormError,
+  UPSTREAM_PROVIDER_OPTIONS,
   UPSTREAM_ACCOUNT_FORM_DEFAULTS,
   updateUpstreamAccountSchema,
   type UpstreamAccountFormValues,
 } from '../lib/upstream-account-form'
-import { formatCnyMoney } from '../money'
+import { formatMoney } from '../money'
 import { SearchAdminShell } from './search-admin-shell'
 
 export function SearchAdminUpstreamAccountsPage() {
@@ -160,10 +170,6 @@ export function SearchAdminUpstreamAccountsPage() {
   const healthyCount = accounts.filter(
     (account) => account.status === 'healthy'
   ).length
-  const totalBalanceMicros = accounts.reduce(
-    (total, account) => total + account.balance_micros,
-    0
-  )
   const totalWeight = accounts.reduce(
     (total, account) => total + account.weight,
     0
@@ -206,7 +212,7 @@ export function SearchAdminUpstreamAccountsPage() {
           </EmptyMedia>
           <EmptyTitle>{t('No upstream accounts')}</EmptyTitle>
           <EmptyDescription>
-            {t('Connect an AgentKey account before enabling capabilities.')}
+            {t('Connect a provider account before enabling capabilities.')}
           </EmptyDescription>
         </EmptyHeader>
         <Button variant='outline' onClick={openCreateDialog}>
@@ -274,7 +280,7 @@ export function SearchAdminUpstreamAccountsPage() {
     <SearchAdminShell
       title={t('vSearch key management')}
       description={t(
-        'Configure the upstream AgentKey accounts used by the vSearch runtime. Secrets are never shown after connection.'
+        'Configure the JustOneAPI and TikHub accounts used by the vSearch runtime. API keys are never shown after connection.'
       )}
       action={
         <Button onClick={openCreateDialog}>
@@ -300,9 +306,7 @@ export function SearchAdminUpstreamAccountsPage() {
           icon={CircleDollarSign}
           label={t('Available balance')}
           value={
-            accountsQuery.isLoading
-              ? '—'
-              : formatCnyMoney({ micros: totalBalanceMicros })
+            accountsQuery.isLoading ? '—' : formatTotalAccountBalance(accounts)
           }
         />
         <AccountMetric
@@ -352,10 +356,10 @@ export function SearchAdminUpstreamAccountsPage() {
       >
         <DialogContent className='sm:max-w-lg'>
           <DialogHeader>
-            <DialogTitle>{t('Connect upstream AgentKey account')}</DialogTitle>
+            <DialogTitle>{t('Connect upstream provider account')}</DialogTitle>
             <DialogDescription>
               {t(
-                'The server stores the key encrypted. Run a health check after connecting; the full key will not be returned.'
+                'The key is stored encrypted and the account is enabled immediately. TikHub supports health checks; JustOneAPI does not provide a non-billable probe.'
               )}
             </DialogDescription>
           </DialogHeader>
@@ -500,16 +504,67 @@ function AccountFormFields(props: {
           }
         />
       </Field>
+      <Controller
+        control={props.form.control}
+        name='provider'
+        render={({ field }) => (
+          <Field data-invalid={Boolean(errors.provider)}>
+            <FieldLabel htmlFor={`${idPrefix}-provider`}>
+              {t('Provider')}
+            </FieldLabel>
+            <Select
+              items={UPSTREAM_PROVIDER_OPTIONS}
+              value={field.value}
+              onValueChange={(value) => {
+                if (!value) return
+                field.onChange(value)
+                props.form.setValue(
+                  'base_url',
+                  getUpstreamProviderDefaultURL(value),
+                  { shouldDirty: true, shouldValidate: true }
+                )
+              }}
+            >
+              <SelectTrigger
+                id={`${idPrefix}-provider`}
+                className='w-full'
+                aria-invalid={Boolean(errors.provider)}
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent alignItemWithTrigger={false}>
+                <SelectGroup>
+                  {UPSTREAM_PROVIDER_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+            <FieldDescription>
+              {t('Choose the upstream service for this account.')}
+            </FieldDescription>
+            <FieldError
+              errors={
+                errors.provider
+                  ? [{ message: t(String(errors.provider.message)) }]
+                  : undefined
+              }
+            />
+          </Field>
+        )}
+      />
       <Field data-invalid={Boolean(errors.api_key)}>
         <FieldLabel htmlFor={`${idPrefix}-key`}>
-          {t('AgentKey secret')}
+          {t('Provider API key')}
         </FieldLabel>
         <Input
           id={`${idPrefix}-key`}
           type='password'
           autoComplete='new-password'
           aria-invalid={Boolean(errors.api_key)}
-          placeholder={t('Paste the upstream AgentKey secret')}
+          placeholder={t('Paste the upstream provider API key')}
           {...props.form.register('api_key')}
         />
         <FieldDescription>
@@ -527,7 +582,7 @@ function AccountFormFields(props: {
       </Field>
       <Field data-invalid={Boolean(errors.base_url)}>
         <FieldLabel htmlFor={`${idPrefix}-base-url`}>
-          {t('AgentKey MCP URL')}
+          {t('Provider API base URL')}
         </FieldLabel>
         <Input
           id={`${idPrefix}-base-url`}
@@ -537,7 +592,7 @@ function AccountFormFields(props: {
         />
         <FieldDescription>
           {t(
-            'Use the default URL unless your AgentKey account provides a custom endpoint.'
+            'Use the default URL unless your provider account uses a custom endpoint.'
           )}
         </FieldDescription>
         <FieldError
@@ -662,16 +717,11 @@ function AccountTable(props: {
             <TableCell>
               <div className='font-medium'>{account.name}</div>
               <div className='text-muted-foreground mt-1 font-mono text-xs'>
-                {account.key_prefix}
+                {upstreamProviderLabel(account.provider)} · {account.key_prefix}
               </div>
             </TableCell>
             <TableCell>{account.plan || '—'}</TableCell>
-            <TableCell>
-              {formatCnyMoney({
-                micros: account.balance_micros,
-                amount: account.balance,
-              })}
-            </TableCell>
+            <TableCell>{formatAccountBalance(account)}</TableCell>
             <TableCell className='text-muted-foreground text-xs'>
               {account.pool} · {props.t('Weight')} {account.weight} ·{' '}
               {props.t('Priority')} {account.priority}
@@ -722,19 +772,14 @@ function AccountCard(props: {
         <div className='min-w-0'>
           <p className='truncate font-medium'>{account.name}</p>
           <p className='text-muted-foreground mt-1 truncate font-mono text-xs'>
-            {account.key_prefix}
+            {upstreamProviderLabel(account.provider)} · {account.key_prefix}
           </p>
         </div>
         <AccountStatus account={account} t={t} />
       </div>
       <div className='text-muted-foreground grid grid-cols-2 gap-2 text-xs'>
         <span>{account.plan || '—'}</span>
-        <span className='text-right'>
-          {formatCnyMoney({
-            micros: account.balance_micros,
-            amount: account.balance,
-          })}
-        </span>
+        <span className='text-right'>{formatAccountBalance(account)}</span>
         <span>{account.pool}</span>
         <span className='text-right'>
           {t('Weight')} {account.weight}
@@ -847,13 +892,14 @@ function AccountActions(props: {
 function accountStatusUpdate(account: SearchUpstreamAccount) {
   return {
     id: account.id,
+    provider: account.provider,
     name: account.name,
     base_url: account.base_url,
     pool_id: account.pool_id,
     weight: account.weight,
     priority: account.priority,
     status:
-      account.status === 'paused' ? ('standby' as const) : ('paused' as const),
+      account.status === 'paused' ? ('healthy' as const) : ('paused' as const),
   }
 }
 
@@ -861,6 +907,7 @@ function accountEditInput(
   account: SearchUpstreamAccount
 ): UpstreamAccountFormValues {
   return {
+    provider: account.provider,
     name: account.name,
     api_key: '',
     base_url: account.base_url,
@@ -869,6 +916,36 @@ function accountEditInput(
     priority: account.priority,
     status: account.status,
   }
+}
+
+function upstreamProviderLabel(provider: SearchUpstreamAccount['provider']) {
+  return (
+    UPSTREAM_PROVIDER_OPTIONS.find((option) => option.value === provider)
+      ?.label || provider
+  )
+}
+
+function formatAccountBalance(account: SearchUpstreamAccount) {
+  if (!account.balance_currency.trim()) return '—'
+  return formatMoney(
+    { micros: account.balance_micros, amount: account.balance },
+    account.balance_currency
+  )
+}
+
+function formatTotalAccountBalance(accounts: SearchUpstreamAccount[]) {
+  if (accounts.length === 0) return '—'
+  const totals = new Map<string, number>()
+  for (const account of accounts) {
+    const currency = account.balance_currency.trim().toUpperCase()
+    if (!currency) continue
+    totals.set(currency, (totals.get(currency) || 0) + account.balance_micros)
+  }
+  if (totals.size === 0) return '—'
+  return [...totals.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([currency, micros]) => formatMoney({ micros }, currency))
+    .join(' · ')
 }
 
 function setAccountFormServerError(

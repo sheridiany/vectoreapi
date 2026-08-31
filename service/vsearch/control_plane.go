@@ -2,7 +2,6 @@ package vsearch
 
 import (
 	"context"
-	"fmt"
 	"math"
 	"net/http"
 	"sort"
@@ -16,15 +15,10 @@ import (
 
 const maxSearchMoneyMicros = int64(9_000_000_000_000_000)
 
-var fullCatalogQueries = []string{
-	"web search API", "web page extraction and crawling", "social media public data",
-	"news and research", "financial market data", "ecommerce product data",
-	"company data", "weather and travel", "job search",
-}
-
 type AccountCommand struct {
 	ID       int
 	Name     string
+	Provider string
 	BaseURL  string
 	Secret   string
 	PoolID   int
@@ -34,26 +28,22 @@ type AccountCommand struct {
 }
 
 type AccountView struct {
-	ID            int     `json:"id"`
-	Name          string  `json:"name"`
-	Provider      string  `json:"provider"`
-	BaseURL       string  `json:"base_url"`
-	KeyPrefix     string  `json:"key_prefix"`
-	Plan          string  `json:"plan"`
-	Balance       float64 `json:"balance"`
-	BalanceMicros int64   `json:"balance_micros"`
-	Weight        int     `json:"weight"`
-	Priority      int     `json:"priority"`
-	Pool          string  `json:"pool"`
-	PoolID        int     `json:"pool_id"`
-	Status        string  `json:"status"`
-	LastCheck     int64   `json:"last_check"`
-	LastError     string  `json:"last_error,omitempty"`
-}
-
-type SyncCommand struct {
-	Queries []string
-	Prefix  string
+	ID              int     `json:"id"`
+	Name            string  `json:"name"`
+	Provider        string  `json:"provider"`
+	BaseURL         string  `json:"base_url"`
+	KeyPrefix       string  `json:"key_prefix"`
+	Plan            string  `json:"plan"`
+	Balance         float64 `json:"balance"`
+	BalanceMicros   int64   `json:"balance_micros"`
+	BalanceCurrency string  `json:"balance_currency"`
+	Weight          int     `json:"weight"`
+	Priority        int     `json:"priority"`
+	Pool            string  `json:"pool"`
+	PoolID          int     `json:"pool_id"`
+	Status          string  `json:"status"`
+	LastCheck       int64   `json:"last_check"`
+	LastError       string  `json:"last_error,omitempty"`
 }
 
 type SyncResult struct {
@@ -75,13 +65,13 @@ type CapabilityCommand struct {
 }
 
 type ControlPlane struct {
-	connectorFactory ConnectorFactory
-	runtime          *ExecutionRuntime
+	adapterFactory AdapterFactory
+	runtime        *ExecutionRuntime
 }
 
-func NewControlPlane(factory ConnectorFactory) *ControlPlane {
+func NewControlPlane(factory AdapterFactory) *ControlPlane {
 	runtime := NewExecutionRuntime(factory)
-	return &ControlPlane{connectorFactory: runtime.connectorFactory, runtime: runtime}
+	return &ControlPlane{adapterFactory: runtime.adapterFactory, runtime: runtime}
 }
 
 func (control *ControlPlane) ListAccounts(ctx context.Context) ([]AccountView, error) {
@@ -99,6 +89,9 @@ func (control *ControlPlane) ListAccounts(ctx context.Context) ([]AccountView, e
 	}
 	views := make([]AccountView, 0, len(accounts))
 	for _, account := range accounts {
+		if account.Provider != model.SearchUpstreamProviderJustOneAPI && account.Provider != model.SearchUpstreamProviderTikHub {
+			continue
+		}
 		views = append(views, toAccountView(account, poolNames[account.PoolID]))
 	}
 	return views, nil
@@ -106,15 +99,42 @@ func (control *ControlPlane) ListAccounts(ctx context.Context) ([]AccountView, e
 
 func (control *ControlPlane) SaveAccount(ctx context.Context, command AccountCommand) (AccountView, error) {
 	command.Name = strings.TrimSpace(command.Name)
+	command.Provider = strings.TrimSpace(command.Provider)
 	command.BaseURL = strings.TrimSpace(command.BaseURL)
 	command.Secret = strings.TrimSpace(command.Secret)
-	if command.BaseURL == "" {
-		command.BaseURL = DefaultAgentKeyMCPURL
+	var account *model.SearchUpstreamAccount
+	var err error
+	providerChanged := false
+	if command.ID > 0 {
+		account, err = model.GetSearchUpstreamAccountByID(command.ID)
+		if err != nil {
+			return AccountView{}, err
+		}
+		if command.Provider == "" {
+			command.Provider = account.Provider
+		}
+		providerChanged = command.Provider != account.Provider
+		if providerChanged && command.Secret == "" {
+			return AccountView{}, &PublicError{Code: "UPSTREAM_SECRET_REQUIRED", Message: "切换上游服务时必须重新输入 API 密钥。", HTTPStatus: http.StatusBadRequest}
+		}
+		if command.BaseURL == "" && !providerChanged {
+			command.BaseURL = account.BaseURL
+		}
+	} else {
+		if command.Provider == "" {
+			command.Provider = ProviderTikHub
+		}
+		account = &model.SearchUpstreamAccount{}
 	}
-	endpoint, err := validateAgentKeyURL(
-		command.BaseURL,
-		model.SearchUpstreamLoopbackHTTPEnabled(),
-	)
+	if command.BaseURL == "" {
+		switch command.Provider {
+		case ProviderJustOneAPI:
+			command.BaseURL = DefaultJustOneAPIBaseURL
+		case ProviderTikHub:
+			command.BaseURL = DefaultTikHubBaseURL
+		}
+	}
+	endpoint, err := model.ValidateSearchUpstreamProviderBaseURL(command.Provider, command.BaseURL, model.SearchUpstreamLoopbackHTTPEnabled())
 	if err != nil {
 		return AccountView{}, safeRuntimeError(err)
 	}
@@ -131,16 +151,9 @@ func (control *ControlPlane) SaveAccount(ctx context.Context, command AccountCom
 		command.Weight = 1
 	}
 
-	var account *model.SearchUpstreamAccount
-	if command.ID > 0 {
-		account, err = model.GetSearchUpstreamAccountByID(command.ID)
-		if err != nil {
-			return AccountView{}, err
-		}
-	} else {
-		account = &model.SearchUpstreamAccount{Provider: model.SearchUpstreamProviderAgentKeyMCP}
+	if command.ID == 0 {
 		if command.Secret == "" {
-			return AccountView{}, &PublicError{Code: "UPSTREAM_SECRET_REQUIRED", Message: "请输入 AgentKey 密钥。", HTTPStatus: http.StatusBadRequest}
+			return AccountView{}, &PublicError{Code: "UPSTREAM_SECRET_REQUIRED", Message: "请输入上游服务 API 密钥。", HTTPStatus: http.StatusBadRequest}
 		}
 	}
 	if command.Secret != "" {
@@ -154,13 +167,26 @@ func (control *ControlPlane) SaveAccount(ctx context.Context, command AccountCom
 		account.SecretPrefix = UpstreamSecretPrefix(command.Secret)
 	}
 	account.PoolID = pool.Id
+	account.Provider = command.Provider
 	account.Name = command.Name
 	account.BaseURL = command.BaseURL
 	account.Weight = command.Weight
 	account.Priority = command.Priority
 	account.Status = status
+	if providerChanged {
+		account.Plan = ""
+		account.BalanceMicros = 0
+		account.BalanceCurrency = ""
+		account.FailureCount = 0
+		account.ConcurrentRequests = 0
+		account.LastCheckedAt = 0
+		account.LastErrorCode = ""
+		account.LastErrorMessage = ""
+	}
 	if account.Id == 0 {
 		err = model.CreateSearchUpstreamAccount(account)
+	} else if providerChanged {
+		err = model.UpdateSearchUpstreamAccountAndDisableBindings(account)
 	} else {
 		err = model.UpdateSearchUpstreamAccount(account)
 	}
@@ -187,27 +213,33 @@ func (control *ControlPlane) ProbeAccount(ctx context.Context, id int) (AccountV
 	if err != nil {
 		return AccountView{}, &PublicError{Code: "VSEARCH_NOT_CONFIGURED", Message: "vSearch 上游密钥无法解密。", HTTPStatus: http.StatusServiceUnavailable}
 	}
-	connector, err := control.connectorFactory(account, secret)
+	adapter, err := control.adapterFactory(account, secret)
 	if err != nil {
 		return AccountView{}, safeRuntimeError(err)
 	}
-	payload, probeErr := connector.Account(ctx)
+	state, probeErr := adapter.Probe(ctx)
 	if probeErr != nil {
+		safeErr := safeRuntimeError(probeErr)
+		if safeErr.Code == "UPSTREAM_PROBE_UNSUPPORTED" {
+			_ = model.UpdateSearchUpstreamAccountHealth(
+				account.Id, account.Status, account.BalanceMicros, account.FailureCount, safeErr.Code, safeErr.Message,
+			)
+			return AccountView{}, safeErr
+		}
 		failureCount := account.FailureCount + 1
 		status := model.SearchUpstreamAccountStatusWarning
 		if failureCount >= 3 {
 			status = model.SearchUpstreamAccountStatusStandby
 		}
-		safeErr := safeRuntimeError(probeErr)
 		_ = model.UpdateSearchUpstreamAccountHealth(account.Id, status, account.BalanceMicros, failureCount, safeErr.Code, safeErr.Message)
 		return AccountView{}, safeErr
 	}
-	plan, balanceMicros := extractAccountMetadata(payload, []string{secret, account.SecretPrefix, account.BaseURL, account.Name})
-	if err := model.UpdateSearchUpstreamAccountHealth(account.Id, model.SearchUpstreamAccountStatusHealthy, balanceMicros, 0, "", ""); err != nil {
+	if err := model.UpdateSearchUpstreamAccountHealth(account.Id, model.SearchUpstreamAccountStatusHealthy, state.BalanceAmountMicros, 0, "", ""); err != nil {
 		return AccountView{}, err
 	}
-	account.Plan = plan
-	account.BalanceMicros = balanceMicros
+	account.Plan = state.Plan
+	account.BalanceMicros = state.BalanceAmountMicros
+	account.BalanceCurrency = state.BalanceCurrency
 	account.Status = model.SearchUpstreamAccountStatusHealthy
 	account.FailureCount = 0
 	account.LastCheckedAt = common.GetTimestamp()
@@ -219,11 +251,7 @@ func (control *ControlPlane) ProbeAccount(ctx context.Context, id int) (AccountV
 	return toAccountView(account, pool.Name), nil
 }
 
-func (control *ControlPlane) SyncCatalog(ctx context.Context, command SyncCommand) (SyncResult, error) {
-	queries, err := normalizeSyncQueries(command.Queries)
-	if err != nil {
-		return SyncResult{}, err
-	}
+func (control *ControlPlane) SyncCatalog(ctx context.Context) (SyncResult, error) {
 	accounts, err := model.ListSearchUpstreamAccounts()
 	if err != nil {
 		return SyncResult{}, err
@@ -238,167 +266,109 @@ func (control *ControlPlane) SyncCatalog(ctx context.Context, command SyncComman
 			enabledPoolIDs[pool.Id] = struct{}{}
 		}
 	}
-	healthy := make([]*model.SearchUpstreamAccount, 0, len(accounts))
-	for _, account := range accounts {
-		if _, enabled := enabledPoolIDs[account.PoolID]; account.Status == model.SearchUpstreamAccountStatusHealthy && enabled {
-			healthy = append(healthy, account)
-		}
-	}
-	if len(healthy) == 0 {
-		return SyncResult{}, &PublicError{Code: "UPSTREAM_ACCOUNT_UNAVAILABLE", Message: "请先接入并通过健康检查的 AgentKey 账号。", HTTPStatus: http.StatusServiceUnavailable}
-	}
-
 	result := SyncResult{Failures: make([]string, 0), SyncedServiceIDs: make([]string, 0)}
 	syncedServiceIDs := make(map[string]struct{})
-	for _, account := range healthy {
-		accountSyncedAt := common.GetTimestamp()
-		accountSyncComplete := true
-		secret, decryptErr := DecryptUpstreamSecret(EncryptedSecret{Ciphertext: account.SecretCiphertext, Nonce: account.SecretNonce, Version: account.SecretVersion})
+	definitions := standardCapabilityRegistry()
+	definitionsByKey := make(map[string]standardCapabilityDefinition, len(definitions))
+	for _, definition := range definitions {
+		definitionsByKey[definition.OperationKey] = definition
+	}
+	for _, account := range accounts {
+		if _, enabled := enabledPoolIDs[account.PoolID]; !enabled || account.Status == model.SearchUpstreamAccountStatusPaused {
+			continue
+		}
+		if account.Provider != model.SearchUpstreamProviderJustOneAPI && account.Provider != model.SearchUpstreamProviderTikHub {
+			continue
+		}
+		secret, decryptErr := DecryptUpstreamSecret(EncryptedSecret{
+			Ciphertext: account.SecretCiphertext, Nonce: account.SecretNonce, Version: account.SecretVersion,
+		})
 		if decryptErr != nil {
 			result.Failures = append(result.Failures, account.Name+"：密钥无法解密")
 			continue
 		}
-		connector, connectorErr := control.connectorFactory(account, secret)
-		if connectorErr != nil {
-			result.Failures = append(result.Failures, account.Name+"：连接器配置无效")
+		adapter, adapterErr := control.adapterFactory(account, secret)
+		if adapterErr != nil {
+			result.Failures = append(result.Failures, account.Name+"：适配器配置无效")
 			continue
 		}
-		discovered := make(map[string]discoveredTool)
-		for _, query := range queries {
-			payload, findErr := connector.FindTools(ctx, query, command.Prefix)
-			if findErr != nil {
-				accountSyncComplete = false
-				result.Failures = append(result.Failures, account.Name+"：目录发现失败")
-				continue
-			}
-			for _, tool := range flattenToolRecords(payload) {
-				if !searchToolAllowed(tool.Name) {
-					continue
-				}
-				discovered[strings.ToLower(tool.Name)] = tool
-				if len(discovered) >= 500 {
-					accountSyncComplete = false
-					break
-				}
-			}
-		}
-		if len(discovered) == 0 {
+		snapshot, snapshotErr := adapter.SnapshotCatalog(ctx)
+		if snapshotErr != nil {
+			result.Failures = append(result.Failures, account.Name+"：标准目录读取失败")
 			continue
 		}
 		result.Accounts++
-		result.Discovered += len(discovered)
-		toolNames := make([]string, 0, len(discovered))
-		for toolName := range discovered {
-			toolNames = append(toolNames, toolName)
-		}
-		sort.Strings(toolNames)
-		for _, normalizedName := range toolNames {
-			tool := discovered[normalizedName]
-			descriptionPayload, describeErr := connector.DescribeTool(ctx, tool.Name)
-			if describeErr == nil {
-				mergeToolDescription(&tool, descriptionPayload)
-			} else {
-				accountSyncComplete = false
-				result.Failures = append(result.Failures, account.Name+"：能力描述读取失败")
-			}
-			publicID, idErr := model.GenerateSearchCapabilityPublicID(tool.Name)
-			if idErr != nil {
-				accountSyncComplete = false
-				result.Failures = append(result.Failures, account.Name+"：能力标识生成失败")
+		result.Discovered += len(snapshot.Operations)
+		syncedAt := common.GetTimestamp()
+		expectedMappingKey := mappingKeyForProvider(account.Provider)
+		expectedBindings := make([]model.SearchCapabilityBindingIdentity, 0, len(snapshot.Operations))
+		for _, operation := range snapshot.Operations {
+			definition, exists := definitionsByKey[operation.OperationKey]
+			if !exists || operation.ContractVersion != definition.ContractVersion || operation.MappingKey != expectedMappingKey {
+				result.Skipped++
 				continue
 			}
-			forbidden := []string{secret, account.SecretPrefix, account.BaseURL, account.Name, tool.Name}
-			schemaText := ""
-			if tool.Schema != nil {
-				safeSchema := sanitizePublicValueWithForbidden(tool.Schema, forbidden)
-				if schemaData, marshalErr := common.Marshal(safeSchema); marshalErr == nil {
-					schemaText = string(schemaData)
-				} else {
-					accountSyncComplete = false
-					result.Failures = append(result.Failures, account.Name+"：能力结构保存失败")
-				}
+			publicID, idErr := model.GenerateSearchCapabilityPublicID(definition.OperationKey + "@" + definition.ContractVersion)
+			if idErr != nil {
+				result.Failures = append(result.Failures, account.Name+"：标准能力标识生成失败")
+				continue
 			}
-			costMicros := numberToMicros(tool.Cost)
-			publicName := sanitizePublicTextWithForbidden(publicToolName(tool), forbidden)
-			publicDescription := sanitizePublicTextWithForbidden(publicToolDescription(tool), forbidden)
-			publicCategory := sanitizePublicTextWithForbidden(classifyTool(tool), forbidden)
+			inputSchema, inputErr := common.Marshal(definition.InputSchema)
+			outputSchema, outputErr := common.Marshal(definition.OutputSchema)
+			parameterMap, parameterErr := common.Marshal(operation.ParameterMap)
+			fixedParams, fixedErr := common.Marshal(operation.FixedParams)
+			if inputErr != nil || outputErr != nil || parameterErr != nil || fixedErr != nil {
+				result.Failures = append(result.Failures, account.Name+"：标准能力合同保存失败")
+				continue
+			}
 			capability := &model.SearchCapability{
-				PublicID: publicID, Name: publicName, Category: publicCategory,
-				Description: publicDescription, InputSchema: schemaText,
+				PublicID: publicID, OperationKey: definition.OperationKey, ContractVersion: definition.ContractVersion,
+				Name: definition.Name, Category: definition.Category, Description: definition.Description,
+				InputSchema: string(inputSchema), OutputSchema: string(outputSchema), SchemaStatus: model.SearchCapabilitySchemaAvailable,
 				Status: model.SearchCapabilityStatusDisabled, AvailabilitySource: model.SearchCapabilityAvailabilityUpstream,
-				UpstreamCostMicros: costMicros,
-				PriceMicros:        costMicros, LastSyncedAt: accountSyncedAt,
+				UpstreamCostMicros: operation.CostAmountMicros, PriceMicros: operation.CostAmountMicros, LastSyncedAt: syncedAt,
 			}
 			if upsertErr := model.UpsertDiscoveredSearchCapability(capability); upsertErr != nil {
-				accountSyncComplete = false
-				result.Failures = append(result.Failures, account.Name+"：能力保存失败")
+				result.Failures = append(result.Failures, account.Name+"：标准能力保存失败")
 				continue
 			}
 			persisted, getErr := model.GetSearchCapabilityByPublicID(publicID)
 			if getErr != nil {
-				accountSyncComplete = false
-				result.Failures = append(result.Failures, account.Name+"：能力读取失败")
+				result.Failures = append(result.Failures, account.Name+"：标准能力读取失败")
 				continue
 			}
 			binding := &model.SearchCapabilityBinding{
-				CapabilityID: persisted.Id, UpstreamAccountID: account.Id, ToolName: tool.Name,
-				InputSchema: schemaText, Status: model.SearchCapabilityBindingStatusEnabled,
-				Weight: account.Weight, Priority: account.Priority,
-				UpstreamCostMicros: costMicros, LastSyncedAt: accountSyncedAt,
+				CapabilityID: persisted.Id, UpstreamAccountID: account.Id, ToolName: operation.OperationID,
+				Platform: operation.Platform, ProviderOperationID: operation.OperationID,
+				HTTPMethod: operation.Method, UpstreamPath: operation.Path, AuthPlacement: operation.AuthPlacement,
+				MappingKey: operation.MappingKey, MappingVersion: operation.MappingVersion,
+				ParameterMap: string(parameterMap), FixedParams: string(fixedParams),
+				InputSchema: string(inputSchema), OutputSchema: string(outputSchema),
+				CostCurrency: operation.CostCurrency, ContractEquivalent: operation.ContractEquivalent,
+				BillingReady: operation.BillingReady,
+				Status:       model.SearchCapabilityBindingStatusEnabled, Weight: account.Weight, Priority: account.Priority,
+				UpstreamCostMicros: operation.CostAmountMicros, LastSyncedAt: syncedAt,
 			}
 			if bindingErr := model.UpsertSearchCapabilityBinding(binding); bindingErr != nil {
-				accountSyncComplete = false
-				result.Failures = append(result.Failures, account.Name+"：能力绑定失败")
+				result.Failures = append(result.Failures, account.Name+"：标准能力绑定失败")
 				continue
 			}
-			allowedBindingIDs, listErr := listAllowedSearchBindingIDs(persisted.Id)
-			if listErr != nil {
-				accountSyncComplete = false
-				result.Failures = append(result.Failures, account.Name+"：能力价格路由读取失败")
-				continue
-			}
-			if priceErr := model.RefreshSearchCapabilityPriceFloorForBindings(persisted.Id, allowedBindingIDs); priceErr != nil {
-				accountSyncComplete = false
-				result.Failures = append(result.Failures, account.Name+"：能力价格更新失败")
-				continue
-			}
+			expectedBindings = append(expectedBindings, model.SearchCapabilityBindingIdentity{
+				CapabilityID: persisted.Id, ProviderOperationID: operation.OperationID, Platform: operation.Platform,
+			})
 			result.Synced++
 			if _, exists := syncedServiceIDs[publicID]; !exists {
 				syncedServiceIDs[publicID] = struct{}{}
 				result.SyncedServiceIDs = append(result.SyncedServiceIDs, publicID)
 			}
 		}
-		if !accountSyncComplete {
-			result.Failures = append(result.Failures, account.Name+"：目录不完整，已保留原有路由")
+		if staleErr := model.DisableStaleSearchCapabilityBindings(account.Id, expectedMappingKey, expectedBindings); staleErr != nil {
+			result.Failures = append(result.Failures, account.Name+"：旧目录绑定停用失败")
 		}
 	}
 	sort.Strings(result.SyncedServiceIDs)
 	if result.Synced == 0 {
-		return result, &PublicError{Code: "CATALOG_SYNC_FAILED", Message: "没有同步到可用能力，请检查 AgentKey 账号。", HTTPStatus: http.StatusBadGateway}
-	}
-	for start := 0; start < len(result.SyncedServiceIDs); start += 500 {
-		end := start + 500
-		if end > len(result.SyncedServiceIDs) {
-			end = len(result.SyncedServiceIDs)
-		}
-		publishResult, publishErr := control.publishCatalog(ctx, PublishCommand{
-			ServiceIDs: result.SyncedServiceIDs[start:end],
-			AccessMode: PublishAccessAllEnterprises,
-		}, false, true)
-		if publishErr != nil {
-			errorCategory := fmt.Sprintf("%T", publishErr)
-			if publicErr, ok := publishErr.(*PublicError); ok {
-				errorCategory = publicErr.Code
-			}
-			common.SysError(fmt.Sprintf(
-				"vSearch catalog auto-publish failed: batch_start=%d batch_end=%d error_category=%s",
-				start+1, end, errorCategory,
-			))
-			result.Failures = append(result.Failures, "目录已同步，但自动启用未全部完成，请重试。")
-			break
-		}
-		result.Published += publishResult.Published
-		result.Skipped += publishResult.Skipped
+		return result, &PublicError{Code: "CATALOG_SYNC_FAILED", Message: "没有同步到标准能力，请检查 JustOneAPI 或 TikHub 账号配置。", HTTPStatus: http.StatusBadGateway}
 	}
 	result.Services, err = control.runtime.ListCatalog(ctx, Principal{}, true)
 	return result, err
@@ -415,6 +385,28 @@ func (control *ControlPlane) ConfigureCapability(ctx context.Context, command Ca
 	if command.Enabled {
 		if _, schemaStatus := parseCapabilitySchema(capability.InputSchema); capability.SchemaStatus != model.SearchCapabilitySchemaAvailable || schemaStatus != "available" {
 			return PublicCapability{}, &PublicError{Code: "CAPABILITY_SCHEMA_UNAVAILABLE", Message: "该能力的参数定义尚未同步。", HTTPStatus: http.StatusServiceUnavailable}
+		}
+		if capability.ContractVersion != "legacy-v1" {
+			bindings, bindingErr := model.ListSearchCapabilityBindings(capability.Id, true)
+			if bindingErr != nil {
+				return PublicCapability{}, bindingErr
+			}
+			contractVerified := false
+			billingReady := false
+			for _, binding := range bindings {
+				if binding.ContractEquivalent {
+					contractVerified = true
+				}
+				if model.IsSearchCapabilityBindingExecutable(capability.ContractVersion, binding) {
+					billingReady = true
+				}
+			}
+			if !contractVerified {
+				return PublicCapability{}, &PublicError{Code: "CAPABILITY_CONTRACT_UNVERIFIED", Message: "该能力的上游返回结构尚未完成标准合同验证。", HTTPStatus: http.StatusServiceUnavailable}
+			}
+			if !billingReady {
+				return PublicCapability{}, &PublicError{Code: "CAPABILITY_PRICING_UNVERIFIED", Message: "该能力的上游成本币种与人民币结算尚未完成验证。", HTTPStatus: http.StatusServiceUnavailable}
+			}
 		}
 		healthyBindings, listErr := listHealthySearchBindings(command.ID)
 		if listErr != nil {
@@ -482,7 +474,7 @@ func toAccountView(account *model.SearchUpstreamAccount, poolName string) Accoun
 	return AccountView{
 		ID: account.Id, Name: account.Name, Provider: account.Provider, BaseURL: account.BaseURL,
 		KeyPrefix: account.SecretPrefix, Plan: account.Plan,
-		Balance: float64(account.BalanceMicros) / 1_000_000, BalanceMicros: account.BalanceMicros,
+		Balance: float64(account.BalanceMicros) / 1_000_000, BalanceMicros: account.BalanceMicros, BalanceCurrency: account.BalanceCurrency,
 		Weight: account.Weight, Priority: account.Priority, Pool: poolName, PoolID: account.PoolID,
 		Status: accountStatusName(account.Status), LastCheck: account.LastCheckedAt,
 		LastError: account.LastErrorMessage,
@@ -491,7 +483,9 @@ func toAccountView(account *model.SearchUpstreamAccount, poolName string) Accoun
 
 func parseAccountStatus(value string) (int, error) {
 	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "", "standby":
+	case "":
+		return model.SearchUpstreamAccountStatusHealthy, nil
+	case "standby":
 		return model.SearchUpstreamAccountStatusStandby, nil
 	case "healthy", "active":
 		return model.SearchUpstreamAccountStatusHealthy, nil
@@ -514,257 +508,6 @@ func accountStatusName(status int) string {
 		return "paused"
 	default:
 		return "standby"
-	}
-}
-
-func normalizeSyncQueries(values []string) ([]string, error) {
-	if len(values) == 0 {
-		return append([]string(nil), fullCatalogQueries...), nil
-	}
-	if len(values) > 20 {
-		return nil, &PublicError{Code: "CATALOG_QUERY_INVALID", Message: "同步查询词不能超过 20 个。", HTTPStatus: http.StatusBadRequest}
-	}
-	seen := map[string]struct{}{}
-	result := make([]string, 0, len(values))
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" || len([]rune(value)) > 120 {
-			return nil, &PublicError{Code: "CATALOG_QUERY_INVALID", Message: "同步查询词无效。", HTTPStatus: http.StatusBadRequest}
-		}
-		if _, ok := seen[value]; ok {
-			continue
-		}
-		seen[value] = struct{}{}
-		result = append(result, value)
-	}
-	return result, nil
-}
-
-type discoveredTool struct {
-	Name        string
-	Title       string
-	Description string
-	Category    string
-	Cost        float64
-	Schema      map[string]any
-}
-
-func flattenToolRecords(value any) []discoveredTool {
-	result := make([]discoveredTool, 0)
-	seen := map[string]struct{}{}
-	visited := 0
-	var visit func(any, int)
-	visit = func(current any, depth int) {
-		if depth > 12 || visited > 20_000 || current == nil {
-			return
-		}
-		visited++
-		switch typed := current.(type) {
-		case string:
-			var parsed any
-			if common.UnmarshalJsonStr(typed, &parsed) == nil {
-				visit(parsed, depth+1)
-			}
-		case []any:
-			for _, item := range typed {
-				visit(item, depth+1)
-			}
-		case map[string]any:
-			name := firstString(typed, "name", "toolName", "tool_name")
-			lowerName := strings.ToLower(strings.TrimSpace(name))
-			if name != "" && lowerName != "find_tools" && lowerName != "describe_tool" && lowerName != "execute_tool" && lowerName != "agentkey_account" {
-				if _, ok := seen[lowerName]; !ok {
-					seen[lowerName] = struct{}{}
-					result = append(result, discoveredTool{
-						Name: name, Title: firstString(typed, "title", "displayName", "display_name"),
-						Description: firstString(typed, "description", "summary"), Category: firstString(typed, "category"),
-						Cost: firstNumber(typed, "cost", "price", "credits"), Schema: extractInputSchema(typed),
-					})
-				}
-				return
-			}
-			for _, key := range []string{"tools", "tool", "services", "items", "results", "content", "data", "result", "structuredContent", "structured_content", "text"} {
-				if nested, ok := typed[key]; ok {
-					visit(nested, depth+1)
-				}
-			}
-		}
-	}
-	visit(value, 0)
-	return result
-}
-
-func mergeToolDescription(tool *discoveredTool, payload any) {
-	if tool == nil {
-		return
-	}
-	var visit func(any, int)
-	visit = func(current any, depth int) {
-		if depth > 12 || current == nil {
-			return
-		}
-		switch typed := current.(type) {
-		case string:
-			var parsed any
-			if common.UnmarshalJsonStr(typed, &parsed) == nil {
-				visit(parsed, depth+1)
-			}
-		case []any:
-			for _, item := range typed {
-				visit(item, depth+1)
-			}
-		case map[string]any:
-			if description := firstString(typed, "description", "summary"); description != "" {
-				tool.Description = description
-			}
-			if schema, declared := extractInputSchemaCandidate(typed); declared {
-				tool.Schema = schema
-			}
-			if cost := firstNumber(typed, "cost", "price", "credits", "amount", "value"); cost > 0 {
-				tool.Cost = cost
-			}
-			for _, key := range []string{"content", "data", "result", "structuredContent", "structured_content", "text", "tool", "pricing", "cost"} {
-				if nested, ok := typed[key]; ok {
-					visit(nested, depth+1)
-				}
-			}
-		}
-	}
-	visit(payload, 0)
-}
-
-func extractInputSchema(value map[string]any) map[string]any {
-	schema, _ := extractInputSchemaCandidate(value)
-	return schema
-}
-
-func extractInputSchemaCandidate(value map[string]any) (map[string]any, bool) {
-	for _, key := range []string{"inputSchema", "input_schema", "schema", "parametersSchema", "params"} {
-		raw, exists := value[key]
-		if !exists {
-			continue
-		}
-		if raw == nil {
-			return nil, true
-		}
-		schema, ok := raw.(map[string]any)
-		if !ok {
-			return nil, true
-		}
-		if _, hasType := schema["type"]; hasType || schema["properties"] != nil {
-			return schema, true
-		}
-		return nil, true
-	}
-	rawParameters, declared := value["parameters"]
-	if !declared {
-		return nil, false
-	}
-	if rawParameters == nil {
-		return nil, true
-	}
-	if schema, ok := rawParameters.(map[string]any); ok {
-		if _, hasType := schema["type"]; hasType || schema["properties"] != nil {
-			return schema, true
-		}
-		return nil, true
-	}
-	parameters, ok := rawParameters.([]any)
-	if !ok {
-		return nil, true
-	}
-	if len(parameters) == 0 {
-		return map[string]any{"type": "object", "properties": map[string]any{}, "additionalProperties": false}, true
-	}
-	properties := make(map[string]any, len(parameters))
-	required := make([]any, 0)
-	requiredNames := make(map[string]struct{})
-	for _, item := range parameters {
-		parameter, ok := item.(map[string]any)
-		if !ok {
-			continue
-		}
-		name := firstString(parameter, "name")
-		if name == "" {
-			continue
-		}
-		typeName, supported := normalizeParameterSchemaType(firstString(parameter, "type"))
-		if !supported {
-			return nil, true
-		}
-		property := map[string]any{"type": typeName}
-		if description := firstString(parameter, "description", "summary"); description != "" {
-			property["description"] = description
-		}
-		if enum, ok := parameter["enum"].([]any); ok && len(enum) > 0 {
-			property["enum"] = enum
-		}
-		if defaultValue, exists := parameter["default"]; exists && defaultValue != nil {
-			property["default"] = defaultValue
-		}
-		constraintKeys := []struct {
-			output string
-			inputs []string
-		}{
-			{output: "minimum", inputs: []string{"minimum", "min"}},
-			{output: "maximum", inputs: []string{"maximum", "max"}},
-		}
-		for _, constraint := range constraintKeys {
-			for _, input := range constraint.inputs {
-				if number, valid := schemaNumber(parameter[input]); valid {
-					property[constraint.output] = number
-					break
-				}
-			}
-		}
-		if typeName == "array" {
-			itemType := firstString(parameter, "itemType", "item_type", "itemsType", "items_type")
-			switch items := parameter["items"].(type) {
-			case string:
-				itemType = items
-			case map[string]any:
-				itemType = firstString(items, "type")
-			}
-			normalizedItemType, supported := normalizeParameterSchemaType(itemType)
-			if !supported {
-				return nil, true
-			}
-			property["items"] = map[string]any{"type": normalizedItemType}
-		}
-		properties[name] = property
-		if requiredValue, _ := parameter["required"].(bool); requiredValue {
-			if _, exists := requiredNames[name]; !exists {
-				requiredNames[name] = struct{}{}
-				required = append(required, name)
-			}
-		}
-	}
-	if len(properties) == 0 {
-		return nil, true
-	}
-	schema := map[string]any{"type": "object", "properties": properties, "additionalProperties": false}
-	if len(required) > 0 {
-		schema["required"] = required
-	}
-	return schema, true
-}
-
-func normalizeParameterSchemaType(value string) (string, bool) {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "string", "str", "text", "url", "date", "datetime":
-		return "string", true
-	case "integer", "int", "int32", "int64":
-		return "integer", true
-	case "number", "float", "float32", "float64", "double", "decimal":
-		return "number", true
-	case "boolean", "bool":
-		return "boolean", true
-	case "object", "map", "dict", "json":
-		return "object", true
-	case "array", "list", "slice":
-		return "array", true
-	default:
-		return "", false
 	}
 }
 
@@ -794,151 +537,4 @@ func schemaNumber(value any) (float64, bool) {
 		return 0, false
 	}
 	return number, true
-}
-
-func firstString(value map[string]any, keys ...string) string {
-	for _, key := range keys {
-		if result, ok := value[key].(string); ok && strings.TrimSpace(result) != "" {
-			return strings.TrimSpace(result)
-		}
-	}
-	return ""
-}
-
-func firstNumber(value map[string]any, keys ...string) float64 {
-	for _, key := range keys {
-		switch typed := value[key].(type) {
-		case float64:
-			if !math.IsNaN(typed) && !math.IsInf(typed, 0) {
-				return typed
-			}
-		case string:
-			if result, err := strconv.ParseFloat(strings.TrimSpace(typed), 64); err == nil && !math.IsNaN(result) && !math.IsInf(result, 0) {
-				return result
-			}
-		case map[string]any:
-			if result := firstNumber(typed, "credits_per_call", "amount", "value", "credits", "remaining", "balance"); result != 0 {
-				return result
-			}
-		}
-	}
-	return 0
-}
-
-func extractAccountMetadata(payload any, forbidden []string) (string, int64) {
-	plan := "已连接"
-	balance := float64(0)
-	var visit func(any, int)
-	visit = func(current any, depth int) {
-		if depth > 10 || current == nil {
-			return
-		}
-		switch typed := current.(type) {
-		case string:
-			var parsed any
-			if common.UnmarshalJsonStr(typed, &parsed) == nil {
-				visit(parsed, depth+1)
-			}
-		case []any:
-			for _, item := range typed {
-				visit(item, depth+1)
-			}
-		case map[string]any:
-			if candidate := firstString(typed, "plan", "tier"); candidate != "" {
-				plan = candidate
-			}
-			if candidate := firstNumber(typed, "balance", "credits"); candidate > 0 {
-				balance = candidate
-			}
-			for _, nested := range typed {
-				visit(nested, depth+1)
-			}
-		}
-	}
-	visit(payload, 0)
-	return truncatePublicText(sanitizePublicTextWithForbidden(plan, forbidden), 64), numberToMicros(balance)
-}
-
-func sanitizePublicTextWithForbidden(value string, forbidden []string) string {
-	sanitized, ok := sanitizePublicValueWithForbidden(value, forbidden).(string)
-	if !ok {
-		return ""
-	}
-	return sanitized
-}
-
-func publicToolName(tool discoveredTool) string {
-	title := strings.TrimSpace(tool.Title)
-	normalizeIdentifier := strings.NewReplacer("/", "", "_", "", "-", "", ".", "", " ", "")
-	normalizedTitle := strings.ToLower(normalizeIdentifier.Replace(title))
-	normalizedToolName := strings.ToLower(normalizeIdentifier.Replace(tool.Name))
-	privateTitle := normalizedToolName != "" && strings.Contains(normalizedTitle, normalizedToolName)
-	if title != "" && !privateTitle && !strings.Contains(title, "/") && !strings.Contains(strings.ToLower(title), "agentkey") && len([]rune(title)) <= 64 {
-		return truncatePublicText(title, 128)
-	}
-	provider := strings.Split(tool.Name, "/")[0]
-	provider = strings.TrimSpace(strings.ReplaceAll(provider, "_", " "))
-	if provider == "" {
-		return "vSearch 数据能力"
-	}
-	return truncatePublicText(provider, 128)
-}
-
-func publicToolDescription(tool discoveredTool) string {
-	description := truncatePublicText(tool.Description, 600)
-	if description == "" || strings.Contains(strings.ToLower(description), strings.ToLower(tool.Name)) {
-		return "可由 vSearch 按需调用的企业数据能力。"
-	}
-	return description
-}
-
-func classifyTool(tool discoveredTool) string {
-	if category := truncatePublicText(tool.Category, 64); category != "" {
-		return category
-	}
-	name := strings.ToLower(tool.Name + " " + tool.Description)
-	switch {
-	case strings.Contains(name, "crawl"), strings.Contains(name, "scrape"), strings.Contains(name, "extract"), strings.Contains(name, "firecrawl"), strings.Contains(name, "jina"):
-		return "抓取"
-	case strings.Contains(name, "wechat"), strings.Contains(name, "douyin"), strings.Contains(name, "tiktok"), strings.Contains(name, "youtube"), strings.Contains(name, "reddit"), strings.Contains(name, "social"):
-		return "社交媒体"
-	case strings.Contains(name, "stock"), strings.Contains(name, "finance"), strings.Contains(name, "market"), strings.Contains(name, "crypto"):
-		return "金融"
-	case strings.Contains(name, "amazon"), strings.Contains(name, "taobao"), strings.Contains(name, "ecommerce"), strings.Contains(name, "product"):
-		return "电商"
-	case strings.Contains(name, "company"), strings.Contains(name, "crunchbase"):
-		return "企业工商"
-	case strings.Contains(name, "weather"):
-		return "天气"
-	case strings.Contains(name, "travel"), strings.Contains(name, "booking"):
-		return "旅行"
-	case strings.Contains(name, "job"), strings.Contains(name, "recruit"):
-		return "招聘"
-	case strings.Contains(name, "news"), strings.Contains(name, "research"):
-		return "新闻研究"
-	default:
-		return "搜索"
-	}
-}
-
-func truncatePublicText(value string, limit int) string {
-	value = strings.TrimSpace(value)
-	value = strings.ReplaceAll(value, "https://api.agentkey.app", "vSearch upstream")
-	value = strings.ReplaceAll(value, "AgentKey", "vSearch upstream")
-	value = strings.ReplaceAll(value, "agentkey", "vSearch upstream")
-	runes := []rune(value)
-	if len(runes) > limit {
-		runes = runes[:limit]
-	}
-	return string(runes)
-}
-
-func numberToMicros(value float64) int64 {
-	if value <= 0 || math.IsNaN(value) || math.IsInf(value, 0) {
-		return 0
-	}
-	if value >= float64(maxSearchMoneyMicros)/1_000_000 {
-		return maxSearchMoneyMicros
-	}
-	return int64(math.Round(value * 1_000_000))
 }

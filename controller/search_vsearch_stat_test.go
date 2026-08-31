@@ -25,9 +25,12 @@ func openSearchUsageStatControllerDB(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(fmt.Sprintf("file:%s?mode=memory&cache=shared", strings.ReplaceAll(t.Name(), "/", "_"))), &gorm.Config{})
 	require.NoError(t, err)
 	previous := model.DB
+	previousLogDB := model.LOG_DB
 	model.DB = db
+	model.LOG_DB = db
 	t.Cleanup(func() {
 		model.DB = previous
+		model.LOG_DB = previousLogDB
 		common.SetDatabaseTypes(previousMainDatabaseType, previousLogDatabaseType)
 	})
 	require.NoError(t, db.AutoMigrate(&model.SearchUsageEvent{}))

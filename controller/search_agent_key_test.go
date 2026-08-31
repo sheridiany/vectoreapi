@@ -37,7 +37,7 @@ func TestCreateSearchAgentKeyReturnsSecretOnce(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
 	c.Set("id", 7)
-	c.Request = httptest.NewRequest("POST", "/api/search/agent-keys", bytes.NewBufferString(`{"name":"browser","scopes":["web-search"]}`))
+	c.Request = httptest.NewRequest("POST", "/api/search/keys", bytes.NewBufferString(`{"name":"browser","scopes":["web-search"]}`))
 	c.Request.Header.Set("Content-Type", "application/json")
 
 	CreateSearchAgentKey(c)

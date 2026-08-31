@@ -8,12 +8,8 @@ the Free Software Foundation, either version 3 of the License, or
 */
 import { createFileRoute } from '@tanstack/react-router'
 
-import { SearchAdminAgentKeysPage } from '@/features/search/admin/agent-keys-page'
-import { requireSearchAgentKeyAdmin } from '@/features/search/route-guard'
+import { VSearchLanding } from '@/features/vsearch-landing'
 
-export const Route = createFileRoute(
-  '/_authenticated/search/admin_/agent-keys'
-)({
-  beforeLoad: requireSearchAgentKeyAdmin,
-  component: SearchAdminAgentKeysPage,
+export const Route = createFileRoute('/vsearch')({
+  component: VSearchLanding,
 })

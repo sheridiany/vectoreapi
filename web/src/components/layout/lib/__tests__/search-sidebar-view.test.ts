@@ -21,8 +21,7 @@ describe('vSearch root sidebar', () => {
     '/search/keys',
     '/search/catalog',
     '/search/logs',
-    '/search/admin/agent-keys',
-    '/search/admin/upstream-accounts',
+    '/search/admin/keys',
     '/search/admin/catalog',
     '/search/admin/usage-logs',
   ])('keeps the root sidebar visible on %s', (pathname) => {

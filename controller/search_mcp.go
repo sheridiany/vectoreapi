@@ -1,8 +1,11 @@
 package controller
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -41,7 +44,7 @@ func HandleSearchMCP(c *gin.Context) {
 	}
 	principal, err := mcpSearchPrincipal(c)
 	if err != nil {
-		writeSearchMCPError(c, http.StatusUnauthorized, request.ID, -32001, "vSearch AgentKey 无效。")
+		writeSearchMCPError(c, http.StatusUnauthorized, request.ID, -32001, "vSearch 密钥无效。")
 		return
 	}
 
@@ -118,8 +121,24 @@ func handleSearchMCPToolCall(c *gin.Context, id any, principal vsearch.Principal
 			return
 		}
 		toolParams, _ := arguments["params"].(map[string]any)
+		idempotencyKey := strings.TrimSpace(c.GetHeader("Idempotency-Key"))
+		if idempotencyKey == "" {
+			sessionID := strings.TrimSpace(c.GetHeader("mcp-session-id"))
+			if sessionID == "" {
+				writeSearchMCPToolError(c, id, &vsearch.PublicError{
+					Code: "IDEMPOTENCY_KEY_REQUIRED", Message: "vSearch 执行请求必须携带 Idempotency-Key 或 mcp-session-id。", HTTPStatus: http.StatusBadRequest,
+				})
+				return
+			}
+			var keyErr error
+			idempotencyKey, keyErr = searchMCPIdempotencyKey(sessionID, id, serviceID, toolParams)
+			if keyErr != nil {
+				writeSearchMCPToolError(c, id, keyErr)
+				return
+			}
+		}
 		result, err := searchRuntime.Execute(c.Request.Context(), principal, vsearch.ExecuteCommand{
-			ServiceID: serviceID, Params: toolParams, IdempotencyKey: c.GetHeader("Idempotency-Key"),
+			ServiceID: serviceID, Params: toolParams, IdempotencyKey: idempotencyKey,
 		})
 		if err != nil {
 			writeSearchMCPToolError(c, id, err)
@@ -129,6 +148,20 @@ func handleSearchMCPToolCall(c *gin.Context, id any, principal vsearch.Principal
 	default:
 		writeSearchMCPError(c, http.StatusOK, id, -32601, "不支持的 vSearch 工具。")
 	}
+}
+
+func searchMCPIdempotencyKey(sessionID string, id any, serviceID string, params map[string]any) (string, error) {
+	payload, err := common.Marshal(struct {
+		SessionID string         `json:"session_id"`
+		ID        any            `json:"id"`
+		ServiceID string         `json:"service_id"`
+		Params    map[string]any `json:"params"`
+	}{SessionID: strings.TrimSpace(sessionID), ID: id, ServiceID: serviceID, Params: params})
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(payload)
+	return "mcp-" + hex.EncodeToString(digest[:]), nil
 }
 
 func searchMCPTools() []gin.H {
@@ -184,7 +217,12 @@ func writeSearchMCPToolResult(c *gin.Context, id any, value any) {
 
 func writeSearchMCPToolError(c *gin.Context, id any, err error) {
 	publicErr := vsearchPublicError(err)
-	value := gin.H{"error": gin.H{"code": publicErr.Code, "message": publicErr.Message}}
+	publicValue := gin.H{"code": publicErr.Code, "message": publicErr.Message}
+	if publicErr.RetryAfterSeconds > 0 {
+		c.Header("Retry-After", strconv.Itoa(publicErr.RetryAfterSeconds))
+		publicValue["retry_after_seconds"] = publicErr.RetryAfterSeconds
+	}
+	value := gin.H{"error": publicValue}
 	writeSearchMCPResult(c, id, gin.H{
 		"content":           []gin.H{{"type": "text", "text": publicErr.Message}},
 		"structuredContent": value,

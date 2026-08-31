@@ -16,15 +16,6 @@ import { redirect } from '@tanstack/react-router'
 import { ROLE } from '@/lib/roles'
 import { useAuthStore, type AuthUser } from '@/stores/auth-store'
 
-export function canManageSearchAgentKeys(user: AuthUser | null | undefined) {
-  return Boolean(
-    user &&
-    (user.role === ROLE.SUPER_ADMIN ||
-      user.enterprise?.role === 'owner' ||
-      user.enterprise?.role === 'admin')
-  )
-}
-
 export function canManageSearch(user: AuthUser | null | undefined) {
   return user?.role === ROLE.SUPER_ADMIN
 }
@@ -36,14 +27,6 @@ export function canViewSearchUsage(user: AuthUser | null | undefined) {
 export function requireSearchAdmin() {
   const user = useAuthStore.getState().auth.user
   if (!user || !canManageSearch(user)) {
-    throw redirect({ to: '/403' })
-  }
-  return user
-}
-
-export function requireSearchAgentKeyAdmin() {
-  const user = useAuthStore.getState().auth.user
-  if (!user || !canManageSearchAgentKeys(user)) {
     throw redirect({ to: '/403' })
   }
   return user

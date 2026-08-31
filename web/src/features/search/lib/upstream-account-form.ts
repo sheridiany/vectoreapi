@@ -20,7 +20,26 @@ import { z } from 'zod'
 
 const ACCOUNT_STATUSES = ['healthy', 'warning', 'standby', 'paused'] as const
 
+export const UPSTREAM_PROVIDER_OPTIONS = [
+  {
+    value: 'tikhub_rest',
+    label: 'TikHub REST',
+    baseURL: 'https://api.tikhub.io',
+  },
+  {
+    value: 'justoneapi_rest',
+    label: 'JustOneAPI REST',
+    baseURL: 'https://api.justoneapi.com',
+  },
+] as const
+
+export type SearchUpstreamProvider =
+  (typeof UPSTREAM_PROVIDER_OPTIONS)[number]['value']
+
 const upstreamAccountFields = {
+  provider: z.enum(['justoneapi_rest', 'tikhub_rest'], {
+    error: 'Choose an upstream provider',
+  }),
   name: z
     .string()
     .trim()
@@ -29,11 +48,11 @@ const upstreamAccountFields = {
   base_url: z
     .string()
     .trim()
-    .min(1, 'Enter a valid AgentKey MCP URL')
-    .max(512, 'Enter a valid AgentKey MCP URL')
+    .min(1, 'Enter a valid provider API base URL')
+    .max(512, 'Enter a valid provider API base URL')
     .refine(
       isAllowedUpstreamURL,
-      'Use HTTPS for remote AgentKey endpoints. HTTP is allowed only for loopback addresses.'
+      'Use HTTPS for remote provider endpoints. HTTP is allowed only for loopback addresses.'
     ),
   pool_id: z
     .number()
@@ -56,13 +75,13 @@ export const createUpstreamAccountSchema = z.object({
   api_key: z
     .string()
     .trim()
-    .min(1, 'AgentKey secret is required')
-    .max(4096, 'AgentKey secret is too long'),
+    .min(1, 'Provider API key is required')
+    .max(4096, 'Provider API key is too long'),
 })
 
 export const updateUpstreamAccountSchema = z.object({
   ...upstreamAccountFields,
-  api_key: z.string().trim().max(4096, 'AgentKey secret is too long'),
+  api_key: z.string().trim().max(4096, 'Provider API key is too long'),
 })
 
 export type UpstreamAccountFormValues = z.infer<
@@ -70,13 +89,14 @@ export type UpstreamAccountFormValues = z.infer<
 >
 
 export const UPSTREAM_ACCOUNT_FORM_DEFAULTS: UpstreamAccountFormValues = {
+  provider: 'tikhub_rest',
   name: '',
   api_key: '',
-  base_url: 'https://api.agentkey.app/v1/mcp',
+  base_url: 'https://api.tikhub.io',
   pool_id: 0,
   weight: 1,
   priority: 0,
-  status: 'standby',
+  status: 'healthy',
 }
 
 export type UpstreamAccountServerFormError = {
@@ -92,13 +112,19 @@ export function getUpstreamAccountServerFormError(
   if (/base[ _-]?url|https|服务地址|上游地址/i.test(message)) {
     return {
       field: 'base_url',
-      messageKey: 'Check the AgentKey MCP URL and try again.',
+      messageKey: 'Check the provider API base URL and try again.',
+    }
+  }
+  if (/provider|供应商|提供商/i.test(message)) {
+    return {
+      field: 'provider',
+      messageKey: 'Choose a supported upstream provider and try again.',
     }
   }
   if (/secret|encrypted secret|密钥/i.test(message)) {
     return {
       field: 'api_key',
-      messageKey: 'Check the AgentKey secret and try again.',
+      messageKey: 'Check the provider API key and try again.',
     }
   }
   if (/account name|账号名称|账户名称/i.test(message)) {
@@ -131,6 +157,15 @@ export function getUpstreamAccountServerFormError(
     messageKey:
       'Unable to save upstream account. Check the form and try again.',
   }
+}
+
+export function getUpstreamProviderDefaultURL(
+  provider: SearchUpstreamProvider
+): string {
+  return (
+    UPSTREAM_PROVIDER_OPTIONS.find((option) => option.value === provider)
+      ?.baseURL || UPSTREAM_PROVIDER_OPTIONS[0].baseURL
+  )
 }
 
 function isAllowedUpstreamURL(value: string): boolean {

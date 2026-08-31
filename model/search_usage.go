@@ -36,6 +36,14 @@ const (
 	SearchUsageActionDiscover     = "discover"
 	SearchUsageActionDescribe     = "describe"
 	SearchUsageActionExecute      = "execute"
+
+	SearchUsageReconciliationSettle = "settle"
+	SearchUsageReconciliationRefund = "refund"
+)
+
+var (
+	ErrSearchUsageNotReconcilable        = errors.New("search usage is not reconcilable")
+	ErrSearchUsageReconciliationConflict = errors.New("search usage reconciliation conflicts with an existing decision")
 )
 
 type SearchUsageEvent struct {
@@ -63,6 +71,10 @@ type SearchUsageEvent struct {
 	BillingState              string `json:"-" gorm:"size:24"`
 	BillingSource             string `json:"-" gorm:"size:24"`
 	ReservedQuota             int    `json:"-" gorm:"type:int"`
+	ReconciliationAction      string `json:"-" gorm:"size:24;index"`
+	ReconciledBy              int    `json:"-" gorm:"index"`
+	ReconciledAt              int64  `json:"-" gorm:"index"`
+	ReconciliationNote        string `json:"-" gorm:"size:255"`
 	ErrorCode                 string `json:"error_code,omitempty" gorm:"size:64;index"`
 	SanitizedErrorMessage     string `json:"error_message,omitempty" gorm:"size:255"`
 	CreatedAt                 int64  `json:"created_at" gorm:"autoCreateTime;index"`
@@ -166,6 +178,14 @@ func normalizeSearchUsageEvent(event *SearchUsageEvent) error {
 	if len(event.BillingSource) > 24 {
 		return errors.New("search usage billing source is too long")
 	}
+	event.ReconciliationAction = strings.TrimSpace(event.ReconciliationAction)
+	if event.ReconciliationAction != "" && event.ReconciliationAction != SearchUsageReconciliationSettle && event.ReconciliationAction != SearchUsageReconciliationRefund {
+		return errors.New("search usage reconciliation action is invalid")
+	}
+	if event.ReconciledBy < 0 || event.ReconciledAt < 0 {
+		return errors.New("search usage reconciliation identity is invalid")
+	}
+	event.ReconciliationNote = truncateSearchUsageText(event.ReconciliationNote, 255)
 	event.ErrorCode = truncateSearchUsageText(event.ErrorCode, 64)
 	event.SanitizedErrorMessage = truncateSearchUsageText(event.SanitizedErrorMessage, 255)
 	return nil
@@ -190,6 +210,7 @@ func FinalizeSearchUsageEvent(event *SearchUsageEvent) error {
 		Updates(map[string]any{
 			"status": event.Status, "http_status": event.HTTPStatus,
 			"latency_ms": event.LatencyMs, "output_bytes": event.OutputBytes,
+			"upstream_request_id":  event.UpstreamRequestID,
 			"upstream_cost_micros": event.UpstreamCostMicros, "charge_micros": event.ChargeMicros,
 			"execution_phase": event.ExecutionPhase, "billing_state": event.BillingState,
 			"billing_source": event.BillingSource, "reserved_quota": event.ReservedQuota,
@@ -241,8 +262,9 @@ func MarkSearchUsageCommitPending(event *SearchUsageEvent) error {
 		Where("id = ? AND status = ? AND billing_state = ?", event.Id, SearchUsageStatusPending, SearchUsageBillingReserved).
 		Updates(map[string]any{
 			"http_status": event.HTTPStatus, "latency_ms": event.LatencyMs,
-			"output_bytes": event.OutputBytes, "upstream_cost_micros": event.UpstreamCostMicros,
-			"charge_micros": event.ChargeMicros, "execution_phase": SearchUsagePhaseCompleted,
+			"output_bytes": event.OutputBytes, "upstream_request_id": event.UpstreamRequestID,
+			"upstream_cost_micros": event.UpstreamCostMicros,
+			"charge_micros":        event.ChargeMicros, "execution_phase": SearchUsagePhaseCompleted,
 			"billing_state": SearchUsageBillingCommitPending, "error_code": "",
 			"sanitized_error_message": "", "updated_at": common.GetTimestamp(),
 		})
@@ -257,14 +279,27 @@ func MarkSearchUsageCommitPending(event *SearchUsageEvent) error {
 }
 
 func MarkSearchUsageRefundPending(event *SearchUsageEvent) error {
-	if event == nil || event.Id <= 0 {
+	if event == nil || event.Id <= 0 || event.UpstreamCostMicros < 0 {
 		return errors.New("search usage refund intent is invalid")
+	}
+	event.UpstreamRequestID = strings.TrimSpace(event.UpstreamRequestID)
+	if len(event.UpstreamRequestID) > 128 {
+		return errors.New("search usage refund intent upstream request id is too long")
+	}
+	switch event.ExecutionPhase {
+	case SearchUsagePhasePrepared, SearchUsagePhaseDispatching, SearchUsagePhaseCompleted:
+	default:
+		return errors.New("search usage refund intent execution phase is invalid")
 	}
 	result := DB.Model(&SearchUsageEvent{}).
 		Where("id = ? AND status = ? AND billing_state IN ?", event.Id, SearchUsageStatusPending, []string{
 			SearchUsageBillingReservePending, SearchUsageBillingReserved, SearchUsageBillingCommitPending, SearchUsageBillingRefundFailed,
 		}).
-		Updates(map[string]any{"billing_state": SearchUsageBillingRefundPending, "updated_at": common.GetTimestamp()})
+		Updates(map[string]any{
+			"billing_state": SearchUsageBillingRefundPending, "execution_phase": event.ExecutionPhase,
+			"upstream_request_id": event.UpstreamRequestID, "upstream_cost_micros": event.UpstreamCostMicros,
+			"updated_at": common.GetTimestamp(),
+		})
 	if result.Error != nil {
 		return result.Error
 	}
@@ -286,10 +321,16 @@ func CommitSearchUsageEvent(eventID int64) (*SearchUsageEvent, error) {
 		if err := lockForUpdate(tx).Where("id = ?", eventID).First(committed).Error; err != nil {
 			return err
 		}
-		if committed.Status == SearchUsageStatusSucceeded && (committed.BillingState == SearchUsageBillingLogPending || committed.BillingState == SearchUsageBillingLogWriting || committed.BillingState == SearchUsageBillingCommitted) {
+		manualSettlement := committed.Status == SearchUsageStatusIndeterminate && committed.ReconciliationAction == SearchUsageReconciliationSettle
+		if (committed.Status == SearchUsageStatusSucceeded || manualSettlement) && (committed.BillingState == SearchUsageBillingLogPending || committed.BillingState == SearchUsageBillingLogWriting || committed.BillingState == SearchUsageBillingCommitted) {
+			if committed.ReconciliationAction != "" {
+				return resolveSearchExecutionIdempotencyByUsageRequestIDTx(tx, committed.RequestID)
+			}
 			return nil
 		}
-		if committed.Status != SearchUsageStatusPending || committed.BillingState != SearchUsageBillingCommitPending || committed.ExecutionPhase != SearchUsagePhaseCompleted {
+		normalSettlement := committed.Status == SearchUsageStatusPending && committed.ExecutionPhase == SearchUsagePhaseCompleted
+		manualSettlement = committed.Status == SearchUsageStatusIndeterminate && committed.ExecutionPhase == SearchUsagePhaseDispatching && committed.ReconciliationAction == SearchUsageReconciliationSettle
+		if (!normalSettlement && !manualSettlement) || committed.BillingState != SearchUsageBillingCommitPending {
 			return errors.New("search usage event is not ready to commit")
 		}
 		userUpdate := tx.Model(&User{}).Where("id = ?", committed.UserID).Updates(map[string]any{
@@ -302,20 +343,33 @@ func CommitSearchUsageEvent(eventID int64) (*SearchUsageEvent, error) {
 		if userUpdate.RowsAffected != 1 {
 			return gorm.ErrRecordNotFound
 		}
-		terminal := tx.Model(&SearchUsageEvent{}).
-			Where("id = ? AND status = ? AND billing_state = ?", committed.Id, SearchUsageStatusPending, SearchUsageBillingCommitPending).
-			Updates(map[string]any{
-				"status": SearchUsageStatusSucceeded, "billing_state": SearchUsageBillingLogPending,
-				"updated_at": common.GetTimestamp(),
-			})
+		terminalStatus := SearchUsageStatusSucceeded
+		if manualSettlement {
+			terminalStatus = SearchUsageStatusIndeterminate
+		}
+		terminalQuery := tx.Model(&SearchUsageEvent{}).
+			Where("id = ? AND status = ? AND billing_state = ?", committed.Id, SearchUsageStatusPending, SearchUsageBillingCommitPending)
+		if manualSettlement {
+			terminalQuery = tx.Model(&SearchUsageEvent{}).
+				Where("id = ? AND status = ? AND reconciliation_action = ? AND billing_state = ?", committed.Id, SearchUsageStatusIndeterminate, SearchUsageReconciliationSettle, SearchUsageBillingCommitPending)
+		}
+		terminal := terminalQuery.Updates(map[string]any{
+			"status": terminalStatus, "billing_state": SearchUsageBillingLogPending,
+			"updated_at": common.GetTimestamp(),
+		})
 		if terminal.Error != nil {
 			return terminal.Error
 		}
 		if terminal.RowsAffected != 1 {
 			return gorm.ErrRecordNotFound
 		}
-		committed.Status = SearchUsageStatusSucceeded
+		committed.Status = terminalStatus
 		committed.BillingState = SearchUsageBillingLogPending
+		if committed.ReconciliationAction != "" {
+			if err := resolveSearchExecutionIdempotencyByUsageRequestIDTx(tx, committed.RequestID); err != nil {
+				return err
+			}
+		}
 		return nil
 	})
 	if err != nil {
@@ -328,7 +382,7 @@ func CommitSearchUsageEvent(eventID int64) (*SearchUsageEvent, error) {
 // RequestID is the durable idempotency key; a crash after log insertion is
 // recovered by observing the existing log before marking the outbox complete.
 func EnsureSearchUsageConsumeLog(event *SearchUsageEvent) error {
-	if event == nil || event.Id <= 0 || event.Status != SearchUsageStatusSucceeded || (event.BillingState != SearchUsageBillingLogPending && event.BillingState != SearchUsageBillingLogWriting && event.BillingState != SearchUsageBillingCommitted) {
+	if event == nil || event.Id <= 0 || !searchUsageCanMaterializeConsumeLog(event) || (event.BillingState != SearchUsageBillingLogPending && event.BillingState != SearchUsageBillingLogWriting && event.BillingState != SearchUsageBillingCommitted) {
 		return errors.New("search usage consume log request is invalid")
 	}
 	if event.BillingState == SearchUsageBillingCommitted {
@@ -336,7 +390,7 @@ func EnsureSearchUsageConsumeLog(event *SearchUsageEvent) error {
 	}
 	now := common.GetTimestamp()
 	claimed := DB.Model(&SearchUsageEvent{}).
-		Where("id = ? AND status = ? AND billing_state = ?", event.Id, SearchUsageStatusSucceeded, SearchUsageBillingLogPending).
+		Where("id = ? AND status = ? AND billing_state = ?", event.Id, event.Status, SearchUsageBillingLogPending).
 		Updates(map[string]any{"billing_state": SearchUsageBillingLogWriting, "updated_at": now})
 	if claimed.Error != nil {
 		return claimed.Error
@@ -346,7 +400,7 @@ func EnsureSearchUsageConsumeLog(event *SearchUsageEvent) error {
 	if err := DB.Where("id = ?", event.Id).First(&stored).Error; err != nil {
 		return err
 	}
-	if stored.Status != SearchUsageStatusSucceeded {
+	if !searchUsageCanMaterializeConsumeLog(&stored) {
 		return errors.New("search usage consume log status is invalid")
 	}
 	if stored.BillingState == SearchUsageBillingCommitted {
@@ -361,7 +415,7 @@ func EnsureSearchUsageConsumeLog(event *SearchUsageEvent) error {
 			return nil
 		}
 		takenOver := DB.Model(&SearchUsageEvent{}).
-			Where("id = ? AND status = ? AND billing_state = ? AND updated_at = ?", stored.Id, SearchUsageStatusSucceeded, SearchUsageBillingLogWriting, stored.UpdatedAt).
+			Where("id = ? AND status = ? AND billing_state = ? AND updated_at = ?", stored.Id, stored.Status, SearchUsageBillingLogWriting, stored.UpdatedAt).
 			Update("updated_at", now)
 		if takenOver.Error != nil {
 			return takenOver.Error
@@ -398,7 +452,7 @@ func EnsureSearchUsageConsumeLog(event *SearchUsageEvent) error {
 		}
 	}
 	result := DB.Model(&SearchUsageEvent{}).
-		Where("id = ? AND status = ? AND billing_state = ? AND updated_at = ?", stored.Id, SearchUsageStatusSucceeded, SearchUsageBillingLogWriting, stored.UpdatedAt).
+		Where("id = ? AND status = ? AND billing_state = ? AND updated_at = ?", stored.Id, stored.Status, SearchUsageBillingLogWriting, stored.UpdatedAt).
 		Updates(map[string]any{"billing_state": SearchUsageBillingCommitted, "updated_at": common.GetTimestamp()})
 	if result.Error != nil {
 		return result.Error
@@ -408,6 +462,11 @@ func EnsureSearchUsageConsumeLog(event *SearchUsageEvent) error {
 	}
 	event.BillingState = SearchUsageBillingCommitted
 	return nil
+}
+
+func searchUsageCanMaterializeConsumeLog(event *SearchUsageEvent) bool {
+	return event != nil && (event.Status == SearchUsageStatusSucceeded ||
+		(event.Status == SearchUsageStatusIndeterminate && event.ReconciliationAction == SearchUsageReconciliationSettle))
 }
 
 func UpdateSearchUsageEventProgress(event *SearchUsageEvent) error {
@@ -516,16 +575,157 @@ func GetSearchUsageStat(query SearchUsageQuery) (*SearchUsageStat, error) {
 			"COALESCE(SUM(CASE WHEN status = ? THEN 1 ELSE 0 END), 0) AS pending_count, "+
 			"COALESCE(SUM(CASE WHEN status = ? THEN 1 ELSE 0 END), 0) AS indeterminate_count, "+
 			"COALESCE(SUM(CASE WHEN status IN (?, ?) THEN latency_ms ELSE 0 END), 0) AS total_latency_ms, "+
-			"COALESCE(SUM(upstream_cost_micros), 0) AS upstream_cost_micros, "+
-			"COALESCE(SUM(charge_micros), 0) AS charge_micros",
+			"COALESCE(SUM(CASE WHEN ((status = ? OR (status = ? AND reconciliation_action = ?)) AND billing_state IN (?, ?, ?)) OR (status = ? AND upstream_cost_micros > 0) THEN upstream_cost_micros ELSE 0 END), 0) AS upstream_cost_micros, "+
+			"COALESCE(SUM(CASE WHEN (status = ? OR (status = ? AND reconciliation_action = ?)) AND billing_state IN (?, ?, ?) THEN charge_micros ELSE 0 END), 0) AS charge_micros",
 		SearchUsageStatusSucceeded, SearchUsageStatusFailed, SearchUsageStatusPending, SearchUsageStatusIndeterminate,
 		SearchUsageStatusSucceeded, SearchUsageStatusFailed,
+		SearchUsageStatusSucceeded, SearchUsageStatusIndeterminate, SearchUsageReconciliationSettle, SearchUsageBillingLogPending, SearchUsageBillingLogWriting, SearchUsageBillingCommitted,
+		SearchUsageStatusFailed,
+		SearchUsageStatusSucceeded, SearchUsageStatusIndeterminate, SearchUsageReconciliationSettle, SearchUsageBillingLogPending, SearchUsageBillingLogWriting, SearchUsageBillingCommitted,
 	).Scan(stat).Error
 	if err != nil {
 		return nil, err
 	}
 	stat.MarginMicros = stat.ChargeMicros - stat.UpstreamCostMicros
 	return stat, nil
+}
+
+func IsSearchUsageFinanciallyRealized(event *SearchUsageEvent) bool {
+	if event == nil || (event.Status != SearchUsageStatusSucceeded && !(event.Status == SearchUsageStatusIndeterminate && event.ReconciliationAction == SearchUsageReconciliationSettle)) {
+		return false
+	}
+	switch event.BillingState {
+	case SearchUsageBillingLogPending, SearchUsageBillingLogWriting, SearchUsageBillingCommitted:
+		return true
+	default:
+		return false
+	}
+}
+
+func IsSearchUsageUpstreamCostRealized(event *SearchUsageEvent) bool {
+	if event == nil || event.UpstreamCostMicros <= 0 {
+		return false
+	}
+	return event.Status == SearchUsageStatusFailed || IsSearchUsageFinanciallyRealized(event)
+}
+
+func ReconcileIndeterminateSearchUsage(eventID int64, action string, adminID int, note string) (*SearchUsageEvent, bool, error) {
+	action = strings.TrimSpace(action)
+	note = strings.TrimSpace(note)
+	if eventID <= 0 || adminID <= 0 || note == "" || len([]rune(note)) > 255 || (action != SearchUsageReconciliationSettle && action != SearchUsageReconciliationRefund) {
+		return nil, false, errors.New("search usage reconciliation request is invalid")
+	}
+
+	event := &SearchUsageEvent{}
+	started := false
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		if err := lockForUpdate(tx).Where("id = ?", eventID).First(event).Error; err != nil {
+			return err
+		}
+		if event.ReconciliationAction != "" {
+			if event.ReconciliationAction != action {
+				return ErrSearchUsageReconciliationConflict
+			}
+			return nil
+		}
+		if event.Status != SearchUsageStatusIndeterminate || event.ExecutionPhase != SearchUsagePhaseDispatching || event.BillingState != SearchUsageBillingReserved {
+			return ErrSearchUsageNotReconcilable
+		}
+		if action == SearchUsageReconciliationSettle {
+			if err := validateSearchUsageReservationTx(tx, event); err != nil {
+				return err
+			}
+		}
+		now := common.GetTimestamp()
+		updates := map[string]any{
+			"reconciliation_action": action, "reconciled_by": adminID,
+			"reconciled_at": now, "reconciliation_note": note, "updated_at": now,
+		}
+		if action == SearchUsageReconciliationSettle {
+			updates["billing_state"] = SearchUsageBillingCommitPending
+			updates["upstream_cost_micros"] = event.PlannedUpstreamCostMicros
+			updates["charge_micros"] = event.PlannedChargeMicros
+			event.BillingState = SearchUsageBillingCommitPending
+			event.UpstreamCostMicros = event.PlannedUpstreamCostMicros
+			event.ChargeMicros = event.PlannedChargeMicros
+		} else {
+			updates["billing_state"] = SearchUsageBillingRefundPending
+			event.BillingState = SearchUsageBillingRefundPending
+		}
+		result := tx.Model(&SearchUsageEvent{}).
+			Where("id = ? AND status = ? AND execution_phase = ? AND billing_state = ? AND (reconciliation_action = ? OR reconciliation_action IS NULL)", event.Id, SearchUsageStatusIndeterminate, SearchUsagePhaseDispatching, SearchUsageBillingReserved, "").
+			Updates(updates)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return gorm.ErrRecordNotFound
+		}
+		event.ReconciliationAction = action
+		event.ReconciledBy = adminID
+		event.ReconciledAt = now
+		event.ReconciliationNote = note
+		started = true
+		return nil
+	})
+	if err != nil {
+		return nil, false, err
+	}
+
+	if action == SearchUsageReconciliationSettle {
+		committed, err := CommitSearchUsageEvent(event.Id)
+		if err != nil {
+			return nil, started, err
+		}
+		if err := EnsureSearchUsageConsumeLog(committed); err != nil {
+			return nil, started, err
+		}
+	} else if err := reconcileSearchUsageRefund(event); err != nil {
+		return nil, started, err
+	}
+	if err := ResolveSearchExecutionIdempotencyByUsageRequestID(event.RequestID); err != nil {
+		return nil, started, err
+	}
+	if err := DB.Where("id = ?", event.Id).First(event).Error; err != nil {
+		return nil, started, err
+	}
+	if action == SearchUsageReconciliationSettle && event.BillingState != SearchUsageBillingCommitted {
+		return nil, started, errors.New("search usage settlement log is still pending")
+	}
+	if action == SearchUsageReconciliationRefund && event.BillingState != SearchUsageBillingRefunded {
+		return nil, started, errors.New("search usage refund is still pending")
+	}
+	return event, started, nil
+}
+
+func validateSearchUsageReservationTx(tx *gorm.DB, event *SearchUsageEvent) error {
+	if event == nil || event.ReservedQuota < 0 {
+		return errors.New("search usage reservation is invalid")
+	}
+	if event.ReservedQuota == 0 {
+		return nil
+	}
+	switch event.BillingSource {
+	case "wallet":
+		var record WalletPreConsumeRecord
+		if err := lockForUpdate(tx).Where("request_id = ?", event.RequestID).First(&record).Error; err != nil {
+			return err
+		}
+		if record.UserID != event.UserID || record.PreConsumed != event.ReservedQuota || record.Status != WalletPreConsumeStatusConsumed {
+			return errors.New("wallet reservation does not match vSearch usage")
+		}
+	case "subscription":
+		var record SubscriptionPreConsumeRecord
+		if err := lockForUpdate(tx).Where("request_id = ?", event.RequestID).First(&record).Error; err != nil {
+			return err
+		}
+		if record.UserId != event.UserID || record.PreConsumed != int64(event.ReservedQuota) || record.Status != "consumed" {
+			return errors.New("subscription reservation does not match vSearch usage")
+		}
+	default:
+		return errors.New("vSearch billing source is invalid")
+	}
+	return nil
 }
 
 func ReconcileStaleSearchUsageEvents(now int64) error {
@@ -535,7 +735,7 @@ func ReconcileStaleSearchUsageEvents(now int64) error {
 	cutoff := now - SearchUsagePendingTimeoutSeconds
 	var stale []*SearchUsageEvent
 	if err := DB.Where("updated_at <= ? AND (status = ? OR billing_state IN ?)", cutoff, SearchUsageStatusPending, []string{
-		SearchUsageBillingRefundPending, SearchUsageBillingRefundFailed,
+		SearchUsageBillingCommitPending, SearchUsageBillingRefundPending, SearchUsageBillingRefundFailed,
 	}).
 		Order("updated_at asc, id asc").Limit(100).Find(&stale).Error; err != nil {
 		return err
@@ -551,7 +751,20 @@ func ReconcileStaleSearchUsageEvents(now int64) error {
 			if err != nil {
 				reconcileErrors = append(reconcileErrors, fmt.Errorf("commit vSearch usage %s: %w", event.RequestID, err))
 			}
-		case SearchUsageBillingReservePending, SearchUsageBillingReserved, SearchUsageBillingRefundPending, SearchUsageBillingRefundFailed:
+		case SearchUsageBillingReservePending, SearchUsageBillingReserved:
+			if event.ExecutionPhase != SearchUsagePhasePrepared {
+				if err := finalizeReconciledSearchUsage(
+					event.Id, SearchUsageStatusIndeterminate, event.BillingState,
+					"VSEARCH_EXECUTION_INDETERMINATE", "vSearch execution may have reached the upstream provider and requires explicit reconciliation.", "",
+				); err != nil {
+					reconcileErrors = append(reconcileErrors, fmt.Errorf("retain vSearch reservation %s: %w", event.RequestID, err))
+				}
+				continue
+			}
+			if err := reconcileSearchUsageRefund(event); err != nil {
+				reconcileErrors = append(reconcileErrors, fmt.Errorf("refund vSearch usage %s: %w", event.RequestID, err))
+			}
+		case SearchUsageBillingRefundPending, SearchUsageBillingRefundFailed:
 			if err := reconcileSearchUsageRefund(event); err != nil {
 				reconcileErrors = append(reconcileErrors, fmt.Errorf("refund vSearch usage %s: %w", event.RequestID, err))
 			}
@@ -564,14 +777,14 @@ func ReconcileStaleSearchUsageEvents(now int64) error {
 				errorCode = "VSEARCH_EXECUTION_RECOVERED"
 				message = "vSearch execution stopped before upstream dispatch."
 			}
-			if err := finalizeReconciledSearchUsage(event.Id, status, event.BillingState, errorCode, message); err != nil {
+			if err := finalizeReconciledSearchUsage(event.Id, status, event.BillingState, errorCode, message, ""); err != nil {
 				reconcileErrors = append(reconcileErrors, fmt.Errorf("finalize vSearch usage %s: %w", event.RequestID, err))
 			}
 		}
 	}
 
 	var pendingLogs []*SearchUsageEvent
-	if err := DB.Where("status = ? AND (billing_state = ? OR (billing_state = ? AND updated_at <= ?))", SearchUsageStatusSucceeded, SearchUsageBillingLogPending, SearchUsageBillingLogWriting, cutoff).
+	if err := DB.Where("(status = ? OR (status = ? AND reconciliation_action = ?)) AND (billing_state = ? OR (billing_state = ? AND updated_at <= ?))", SearchUsageStatusSucceeded, SearchUsageStatusIndeterminate, SearchUsageReconciliationSettle, SearchUsageBillingLogPending, SearchUsageBillingLogWriting, cutoff).
 		Order("id asc").Limit(100).Find(&pendingLogs).Error; err != nil {
 		reconcileErrors = append(reconcileErrors, err)
 	} else {
@@ -637,65 +850,77 @@ func reconcileSearchUsageRefund(event *SearchUsageEvent) error {
 		return errors.New("durable reservation record is missing")
 	}
 
-	status := SearchUsageStatusIndeterminate
-	errorCode := "VSEARCH_EXECUTION_INDETERMINATE"
-	message := "vSearch execution state was recovered and its reservation was refunded."
+	status := SearchUsageStatusFailed
+	errorCode := "VSEARCH_EXECUTION_RECOVERED"
+	message := "vSearch execution failed and its reservation was refunded during recovery."
 	if event.ExecutionPhase == SearchUsagePhasePrepared {
-		status = SearchUsageStatusFailed
-		errorCode = "VSEARCH_EXECUTION_RECOVERED"
 		message = "vSearch execution stopped before upstream dispatch and its reservation was refunded."
 	}
 	if event.Status != SearchUsageStatusPending {
-		result := DB.Model(&SearchUsageEvent{}).
-			Where("id = ? AND billing_state = ?", event.Id, SearchUsageBillingRefundPending).
+		return DB.Transaction(func(tx *gorm.DB) error {
+			result := tx.Model(&SearchUsageEvent{}).
+				Where("id = ? AND billing_state = ?", event.Id, SearchUsageBillingRefundPending).
+				Updates(map[string]any{
+					"billing_state": SearchUsageBillingRefunded, "charge_micros": 0,
+					"error_code":              "VSEARCH_BILLING_COMPENSATION_RECOVERED",
+					"sanitized_error_message": "vSearch billing compensation completed during recovery.",
+					"updated_at":              common.GetTimestamp(),
+				})
+			if result.Error != nil {
+				return result.Error
+			}
+			if result.RowsAffected == 0 {
+				var stored SearchUsageEvent
+				if err := tx.Where("id = ?", event.Id).First(&stored).Error; err != nil {
+					return err
+				}
+				if stored.BillingState != SearchUsageBillingRefunded {
+					return gorm.ErrRecordNotFound
+				}
+			}
+			if event.ReconciliationAction != "" || event.ExecutionPhase != SearchUsagePhasePrepared {
+				return resolveSearchExecutionIdempotencyByUsageRequestIDTx(tx, event.RequestID)
+			}
+			return nil
+		})
+	}
+	resolveUsageRequestID := ""
+	if event.ExecutionPhase != SearchUsagePhasePrepared {
+		resolveUsageRequestID = event.RequestID
+	}
+	return finalizeReconciledSearchUsage(event.Id, status, SearchUsageBillingRefunded, errorCode, message, resolveUsageRequestID)
+}
+
+func markSearchUsageRefundFailed(eventID int64) error {
+	return DB.Model(&SearchUsageEvent{}).
+		Where("id = ? AND (status = ? OR (status = ? AND reconciliation_action = ?))", eventID, SearchUsageStatusPending, SearchUsageStatusIndeterminate, SearchUsageReconciliationRefund).
+		Updates(map[string]any{"billing_state": SearchUsageBillingRefundFailed, "updated_at": common.GetTimestamp()}).Error
+}
+
+func finalizeReconciledSearchUsage(eventID int64, status int, billingState, errorCode, message, resolveUsageRequestID string) error {
+	return DB.Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&SearchUsageEvent{}).
+			Where("id = ? AND status = ?", eventID, SearchUsageStatusPending).
 			Updates(map[string]any{
-				"billing_state": SearchUsageBillingRefunded, "charge_micros": 0,
-				"error_code":              "VSEARCH_BILLING_COMPENSATION_RECOVERED",
-				"sanitized_error_message": "vSearch billing compensation completed during recovery.",
-				"updated_at":              common.GetTimestamp(),
+				"status": status, "http_status": 500, "billing_state": billingState,
+				"charge_micros": 0, "error_code": errorCode,
+				"sanitized_error_message": message, "updated_at": common.GetTimestamp(),
 			})
 		if result.Error != nil {
 			return result.Error
 		}
 		if result.RowsAffected == 0 {
 			var stored SearchUsageEvent
-			if err := DB.Where("id = ?", event.Id).First(&stored).Error; err != nil {
+			if err := tx.Where("id = ?", eventID).First(&stored).Error; err != nil {
 				return err
 			}
-			if stored.BillingState != SearchUsageBillingRefunded {
+			if stored.Status != status || stored.BillingState != billingState {
 				return gorm.ErrRecordNotFound
 			}
 		}
+		if resolveUsageRequestID != "" {
+			return resolveSearchExecutionIdempotencyByUsageRequestIDTx(tx, resolveUsageRequestID)
+		}
 		return nil
-	}
-	return finalizeReconciledSearchUsage(event.Id, status, SearchUsageBillingRefunded, errorCode, message)
-}
-
-func markSearchUsageRefundFailed(eventID int64) error {
-	return DB.Model(&SearchUsageEvent{}).Where("id = ? AND status = ?", eventID, SearchUsageStatusPending).
-		Updates(map[string]any{"billing_state": SearchUsageBillingRefundFailed, "updated_at": common.GetTimestamp()}).Error
-}
-
-func finalizeReconciledSearchUsage(eventID int64, status int, billingState, errorCode, message string) error {
-	result := DB.Model(&SearchUsageEvent{}).
-		Where("id = ? AND status = ?", eventID, SearchUsageStatusPending).
-		Updates(map[string]any{
-			"status": status, "http_status": 500, "billing_state": billingState,
-			"charge_micros": 0, "error_code": errorCode,
-			"sanitized_error_message": message, "updated_at": common.GetTimestamp(),
-		})
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected == 0 {
-		var stored SearchUsageEvent
-		if err := DB.Where("id = ?", eventID).First(&stored).Error; err != nil {
-			return err
-		}
-		if stored.Status == status && stored.BillingState == billingState {
-			return nil
-		}
-		return gorm.ErrRecordNotFound
-	}
-	return nil
+	})
 }

@@ -68,7 +68,10 @@ export async function getUserGroups(): Promise<{
 // ============================================================================
 
 export async function getStatus() {
-  const res = await api.get('/api/status')
+  const res = await api.get('/api/status', {
+    skipBusinessError: true,
+    skipErrorHandler: true,
+  })
   return res.data?.data as Record<string, unknown>
 }
 
@@ -77,7 +80,10 @@ export async function getNotice(): Promise<{
   message?: string
   data?: string
 }> {
-  const res = await api.get('/api/notice')
+  const res = await api.get('/api/notice', {
+    skipBusinessError: true,
+    skipErrorHandler: true,
+  })
   return res.data
 }
 

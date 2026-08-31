@@ -44,7 +44,7 @@ describe('root sidebar vSearch menus', () => {
       '/search/logs',
     ])
     expect(searchUrls(result.current.navGroups, 'admin')).toEqual([
-      '/search/admin/agent-keys',
+      '/search/admin/keys',
       '/search/admin/catalog',
       '/search/admin/usage-logs',
     ])
@@ -60,7 +60,7 @@ describe('root sidebar vSearch menus', () => {
     ])
   })
 
-  test('shows only enterprise-scoped vSearch key management to enterprise managers', () => {
+  test('does not show platform vSearch administration to enterprise managers', () => {
     useAuthStore.getState().auth.setUser({
       id: 2,
       username: 'owner',
@@ -76,12 +76,8 @@ describe('root sidebar vSearch menus', () => {
 
     const { result } = renderHook(() => useSidebarData())
 
-    expect(searchUrls(result.current.navGroups, 'admin')).toEqual([
-      '/search/admin/agent-keys',
-    ])
-    expect(searchTitles(result.current.navGroups, 'admin')).toEqual([
-      'vSearch keys',
-    ])
+    expect(searchUrls(result.current.navGroups, 'admin')).toEqual([])
+    expect(searchTitles(result.current.navGroups, 'admin')).toEqual([])
   })
 })
 

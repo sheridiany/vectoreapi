@@ -56,8 +56,11 @@ describe('vSearch capability page', () => {
         category: 'Search',
         description: 'Search the public web.',
         status: 'available',
+        contract_status: 'verified',
         enabled: true,
         interface_count: 3,
+        available_interface_count: 2,
+        supported_platforms: ['TikTok', 'Douyin'],
         recent_latency_ms: 280,
         price_min_micros: 1,
         price_max_micros: 1,
@@ -68,8 +71,11 @@ describe('vSearch capability page', () => {
         category: 'Extract',
         description: 'Extract readable pages.',
         status: 'available',
+        contract_status: 'verified',
         enabled: true,
         interface_count: 2,
+        available_interface_count: 1,
+        supported_platforms: ['Web'],
       },
     ])
   })
@@ -102,6 +108,77 @@ describe('vSearch capability page', () => {
       'missing service'
     )
     expect(screen.getByText('No matching capabilities')).toBeInTheDocument()
+  })
+
+  test('searches by supported platform', async () => {
+    const user = userEvent.setup()
+    renderCatalog()
+
+    await screen.findByText('Brave Search')
+    await user.type(
+      screen.getByRole('textbox', { name: 'Search capability catalog' }),
+      'tiktok'
+    )
+
+    expect(screen.getByText('Brave Search')).toBeInTheDocument()
+    expect(screen.queryByText('Firecrawl')).not.toBeInTheDocument()
+  })
+
+  test('distinguishes cataloged interfaces, callable interfaces, and rollout status', async () => {
+    vi.mocked(fetchSearchCatalog).mockResolvedValueOnce([
+      {
+        id: 'available-capability',
+        name: 'Available capability',
+        category: 'Search',
+        description: 'Ready to call.',
+        status: 'available',
+        contract_status: 'verified',
+        enabled: true,
+        interface_count: 3,
+        available_interface_count: 2,
+        supported_platforms: ['TikTok', 'Douyin'],
+      },
+      {
+        id: 'draft-capability',
+        name: 'Draft capability',
+        category: 'Social media',
+        description: 'Being prepared.',
+        status: 'catalog',
+        contract_status: 'unverified',
+        enabled: false,
+        interface_count: 2,
+        available_interface_count: 0,
+        supported_platforms: ['Reddit'],
+      },
+      {
+        id: 'unrouted-capability',
+        name: 'Unrouted capability',
+        category: 'Business',
+        description: 'Published without a healthy route.',
+        status: 'unavailable',
+        contract_status: 'verified',
+        enabled: true,
+        interface_count: 1,
+        available_interface_count: 0,
+        supported_platforms: ['LinkedIn'],
+      },
+    ])
+
+    renderCatalog()
+
+    expect(await screen.findByText('Available capability')).toBeInTheDocument()
+    expect(screen.getByText('Preparing')).toBeInTheDocument()
+    expect(screen.getByText('Temporarily unavailable')).toBeInTheDocument()
+    expect(screen.getByText('TikTok')).toBeInTheDocument()
+    expect(screen.getByText('抖音')).toBeInTheDocument()
+    expect(screen.getByText('Reddit')).toBeInTheDocument()
+    expect(screen.getByText('LinkedIn')).toBeInTheDocument()
+    expect(
+      screen.getByText('Cataloged interfaces').parentElement
+    ).toHaveTextContent('6')
+    expect(
+      screen.getByText('Callable interfaces').parentElement
+    ).toHaveTextContent('2')
   })
 
   test('offers retry when the catalog endpoint fails', async () => {

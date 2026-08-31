@@ -115,13 +115,13 @@ func TestSearchAdminAuthAllowsRootAndActiveEnterpriseManagers(t *testing.T) {
 				c.Next()
 			})
 			engine.Use(SearchAdminAuth())
-			engine.GET("/api/search/admin/agent-keys", func(c *gin.Context) {
+			engine.GET("/api/search/admin/keys", func(c *gin.Context) {
 				assert.Equal(t, testCase.wantEnterprise, c.GetInt("enterprise_id"))
 				c.Status(http.StatusNoContent)
 			})
 
 			recorder := httptest.NewRecorder()
-			request := httptest.NewRequest(http.MethodGet, "/api/search/admin/agent-keys", nil)
+			request := httptest.NewRequest(http.MethodGet, "/api/search/admin/keys", nil)
 			engine.ServeHTTP(recorder, request)
 
 			assert.Equal(t, http.StatusNoContent, recorder.Code)
@@ -153,12 +153,12 @@ func TestSearchAdminAuthRejectsEnterpriseMembersAndAuditors(t *testing.T) {
 				c.Next()
 			})
 			engine.Use(SearchAdminAuth())
-			engine.GET("/api/search/admin/agent-keys", func(c *gin.Context) {
+			engine.GET("/api/search/admin/keys", func(c *gin.Context) {
 				c.Status(http.StatusNoContent)
 			})
 
 			recorder := httptest.NewRecorder()
-			request := httptest.NewRequest(http.MethodGet, "/api/search/admin/agent-keys", nil)
+			request := httptest.NewRequest(http.MethodGet, "/api/search/admin/keys", nil)
 			engine.ServeHTTP(recorder, request)
 
 			assert.Equal(t, http.StatusForbidden, recorder.Code)

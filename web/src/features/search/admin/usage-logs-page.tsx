@@ -6,7 +6,8 @@ it under the terms of the GNU Affero General Public License as published by
 the Free Software Foundation, either version 3 of the License, or
 (at your option) any later version.
 */
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { zodResolver } from '@hookform/resolvers/zod'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   BarChart3,
   ChevronLeft,
@@ -20,10 +21,20 @@ import {
   TrendingUp,
 } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
+import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
 import { StatusBadge } from '@/components/status-badge'
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import {
@@ -33,17 +44,31 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from '@/components/ui/empty'
+import {
+  Field,
+  FieldDescription,
+  FieldError,
+  FieldLabel,
+} from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Textarea } from '@/components/ui/textarea'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { handleServerError } from '@/lib/handle-server-error'
+import { cn } from '@/lib/utils'
 
 import {
   exportAdminSearchUsageLogs,
   fetchAdminSearchUsageLogs,
   fetchAdminSearchUsageStats,
+  reconcileAdminSearchUsage,
   type SearchUsageLog,
+  type SearchUsageReconciliationAction,
 } from '../api'
+import {
+  usageReconciliationSchema,
+  type UsageReconciliationFormValues,
+} from '../lib/usage-reconciliation-form'
 import { formatCnyMoney } from '../money'
 import { SearchAdminShell } from './search-admin-shell'
 
@@ -52,11 +77,16 @@ const RANGE_OPTIONS = [7, 30, 90] as const
 
 export function SearchAdminUsageLogsPage() {
   const { t } = useTranslation()
+  const queryClient = useQueryClient()
   const [range, setRange] = useState<(typeof RANGE_OPTIONS)[number]>(30)
   const [queryInput, setQueryInput] = useState('')
   const [query, setQuery] = useState('')
   const [status, setStatus] = useState('all')
   const [page, setPage] = useState(1)
+  const [reconciliation, setReconciliation] = useState<{
+    log: SearchUsageLog
+    action: SearchUsageReconciliationAction
+  } | null>(null)
 
   useEffect(() => {
     const timeoutId = setTimeout(() => setQuery(queryInput.trim()), 300)
@@ -98,6 +128,39 @@ export function SearchAdminUsageLogsPage() {
     },
     onError: handleServerError,
   })
+  const reconciliationMutation = useMutation({
+    mutationFn: (input: {
+      id: number
+      action: SearchUsageReconciliationAction
+      note: string
+    }) =>
+      reconcileAdminSearchUsage(input.id, {
+        action: input.action,
+        note: input.note,
+      }),
+    onSuccess: () => {
+      setReconciliation(null)
+      toast.success(t('vSearch request reconciled'))
+    },
+    onSettled: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: ['search-admin-usage-logs'],
+        }),
+        queryClient.invalidateQueries({
+          queryKey: ['search-admin-usage-stats'],
+        }),
+      ])
+    },
+    onError: handleServerError,
+  })
+
+  const openReconciliation = (
+    log: SearchUsageLog,
+    action: SearchUsageReconciliationAction
+  ) => {
+    setReconciliation({ log, action })
+  }
 
   const logs = logsQuery.data?.items || []
   const total = logsQuery.data?.total || 0
@@ -142,12 +205,24 @@ export function SearchAdminUsageLogsPage() {
   } else {
     content = (
       <>
-        <div className='hidden overflow-x-auto md:block'>
-          <AdminLogTable logs={logs} t={t} />
+        <div
+          className='hidden overflow-x-auto md:block'
+          data-testid='desktop-usage-logs'
+        >
+          <AdminLogTable
+            logs={logs}
+            onReconcile={openReconciliation}
+            isReconciling={reconciliationMutation.isPending}
+          />
         </div>
-        <div className='divide-y md:hidden'>
+        <div className='divide-y md:hidden' data-testid='mobile-usage-logs'>
           {logs.map((log) => (
-            <AdminLogCard key={log.id} log={log} t={t} />
+            <AdminLogCard
+              key={log.id}
+              log={log}
+              onReconcile={openReconciliation}
+              isReconciling={reconciliationMutation.isPending}
+            />
           ))}
         </div>
       </>
@@ -240,7 +315,9 @@ export function SearchAdminUsageLogsPage() {
                 className='mt-2 h-9 pl-9'
                 value={queryInput}
                 onChange={(event) => setQueryInput(event.target.value)}
-                placeholder={t('Search user, service, endpoint, or AgentKey')}
+                placeholder={t(
+                  'Search user, service, endpoint, or vSearch key'
+                )}
               />
             </label>
             <div className='flex flex-col gap-4 sm:flex-row'>
@@ -285,6 +362,12 @@ export function SearchAdminUsageLogsPage() {
                     {t('Success')}
                   </ToggleGroupItem>
                   <ToggleGroupItem value='error'>{t('Error')}</ToggleGroupItem>
+                  <ToggleGroupItem value='pending'>
+                    {t('Pending')}
+                  </ToggleGroupItem>
+                  <ToggleGroupItem value='indeterminate'>
+                    {t('Indeterminate')}
+                  </ToggleGroupItem>
                 </ToggleGroup>
               </div>
             </div>
@@ -332,6 +415,24 @@ export function SearchAdminUsageLogsPage() {
           )}
         </CardContent>
       </Card>
+
+      <ReconciliationDialog
+        reconciliation={reconciliation}
+        isPending={reconciliationMutation.isPending}
+        onOpenChange={(open) => {
+          if (!open && !reconciliationMutation.isPending) {
+            setReconciliation(null)
+          }
+        }}
+        onConfirm={(note) => {
+          if (!reconciliation) return
+          reconciliationMutation.mutate({
+            id: Number(reconciliation.log.id),
+            action: reconciliation.action,
+            note,
+          })
+        }}
+      />
     </SearchAdminShell>
   )
 }
@@ -366,36 +467,36 @@ function UsageMetric(props: {
 
 function AdminLogTable(props: {
   logs: SearchUsageLog[]
-  t: (key: string) => string
+  onReconcile: (
+    log: SearchUsageLog,
+    action: SearchUsageReconciliationAction
+  ) => void
+  isReconciling: boolean
 }) {
+  const { t } = useTranslation()
   return (
     <table className='w-full min-w-[1540px] text-sm'>
       <thead className='bg-muted/50 text-muted-foreground text-left text-xs'>
         <tr>
-          <th className='px-5 py-3 font-medium'>{props.t('Time')}</th>
-          <th className='px-5 py-3 font-medium'>
-            {props.t('Enterprise / User')}
-          </th>
-          <th className='px-5 py-3 font-medium'>{props.t('Service')}</th>
-          <th className='px-5 py-3 font-medium'>{props.t('Endpoint')}</th>
-          <th className='px-5 py-3 font-medium'>{props.t('Request ID')}</th>
-          <th className='px-5 py-3 font-medium'>{props.t('Error code')}</th>
-          <th className='px-5 py-3 font-medium'>
-            {props.t('Upstream account')}
-          </th>
-          <th className='px-5 py-3 font-medium'>{props.t('Status')}</th>
+          <th className='px-5 py-3 font-medium'>{t('Time')}</th>
+          <th className='px-5 py-3 font-medium'>{t('Enterprise / User')}</th>
+          <th className='px-5 py-3 font-medium'>{t('Service')}</th>
+          <th className='px-5 py-3 font-medium'>{t('Endpoint')}</th>
+          <th className='px-5 py-3 font-medium'>{t('Request ID')}</th>
+          <th className='px-5 py-3 font-medium'>{t('Error code')}</th>
+          <th className='px-5 py-3 font-medium'>{t('Upstream account')}</th>
+          <th className='px-5 py-3 font-medium'>{t('Status')}</th>
+          <th className='px-5 py-3 text-right font-medium'>{t('Latency')}</th>
           <th className='px-5 py-3 text-right font-medium'>
-            {props.t('Latency')}
+            {t('Upstream cost')}
           </th>
           <th className='px-5 py-3 text-right font-medium'>
-            {props.t('Upstream cost')}
+            {t('User revenue')}
           </th>
           <th className='px-5 py-3 text-right font-medium'>
-            {props.t('User revenue')}
+            {t('Gross profit')}
           </th>
-          <th className='px-5 py-3 text-right font-medium'>
-            {props.t('Gross profit')}
-          </th>
+          <th className='px-5 py-3 text-right font-medium'>{t('Actions')}</th>
         </tr>
       </thead>
       <tbody className='divide-y'>
@@ -426,7 +527,7 @@ function AdminLogTable(props: {
               {log.account || '—'}
             </td>
             <td className='px-5 py-3'>
-              <LogStatus status={log.status} t={props.t} />
+              <LogStatus status={log.status} />
             </td>
             <td className='text-muted-foreground px-5 py-3 text-right font-mono text-xs'>
               {formatLatency(log.latency_ms)}
@@ -449,6 +550,14 @@ function AdminLogTable(props: {
                 amount: log.profit,
               })}
             </td>
+            <td className='px-5 py-3'>
+              <AdminLogActions
+                log={log}
+                onReconcile={props.onReconcile}
+                disabled={props.isReconciling}
+                justifyEnd
+              />
+            </td>
           </tr>
         ))}
       </tbody>
@@ -458,78 +567,280 @@ function AdminLogTable(props: {
 
 function AdminLogCard(props: {
   log: SearchUsageLog
-  t: (key: string) => string
+  onReconcile: (
+    log: SearchUsageLog,
+    action: SearchUsageReconciliationAction
+  ) => void
+  isReconciling: boolean
 }) {
-  const { log, t } = props
+  const { t } = useTranslation()
   return (
     <article className='space-y-3 p-4'>
       <div className='flex items-start justify-between gap-3'>
         <div className='min-w-0'>
-          <p className='truncate font-medium'>{log.service || '—'}</p>
+          <p className='truncate font-medium'>{props.log.service || '—'}</p>
           <p className='text-muted-foreground mt-1 truncate text-xs'>
-            {log.enterprise_name || '—'} · {log.user_name || '—'}
+            {props.log.enterprise_name || '—'} · {props.log.user_name || '—'}
           </p>
         </div>
-        <LogStatus status={log.status} t={t} />
+        <LogStatus status={props.log.status} />
       </div>
       <div className='text-muted-foreground grid grid-cols-2 gap-2 text-xs'>
-        <span>{formatTimestamp(log.created_at)}</span>
-        <span className='text-right'>{formatLatency(log.latency_ms)}</span>
+        <span>{formatTimestamp(props.log.created_at)}</span>
+        <span className='text-right'>
+          {formatLatency(props.log.latency_ms)}
+        </span>
         <span>{t('Endpoint')}</span>
         <span className='truncate text-right font-mono'>
-          {log.endpoint || '—'}
+          {props.log.endpoint || '—'}
         </span>
         <span>{t('Request ID')}</span>
         <span className='truncate text-right font-mono'>
-          {log.request_id || '—'}
+          {props.log.request_id || '—'}
         </span>
         <span>{t('Error code')}</span>
         <span className='truncate text-right font-mono'>
-          {log.error_code || '—'}
+          {props.log.error_code || '—'}
         </span>
         <span>{t('Upstream account')}</span>
-        <span className='truncate text-right'>{log.account || '—'}</span>
+        <span className='truncate text-right'>{props.log.account || '—'}</span>
         <span>{t('Upstream cost')}</span>
         <span className='text-right'>
-          {formatUsageMoney(log, {
-            micros: log.upstream_cost_micros,
-            amount: log.upstream_cost,
+          {formatUsageMoney(props.log, {
+            micros: props.log.upstream_cost_micros,
+            amount: props.log.upstream_cost,
           })}
         </span>
         <span>{t('User revenue')}</span>
         <span className='text-right'>
-          {formatUsageMoney(log, {
-            micros: log.charge_micros,
-            amount: log.charge,
+          {formatUsageMoney(props.log, {
+            micros: props.log.charge_micros,
+            amount: props.log.charge,
           })}
         </span>
         <span>{t('Gross profit')}</span>
         <span className='text-right'>
-          {formatUsageMoney(log, {
-            micros: log.profit_micros,
-            amount: log.profit,
+          {formatUsageMoney(props.log, {
+            micros: props.log.profit_micros,
+            amount: props.log.profit,
           })}
         </span>
       </div>
+      <AdminLogActions
+        log={props.log}
+        onReconcile={props.onReconcile}
+        disabled={props.isReconciling}
+      />
     </article>
   )
 }
 
-function LogStatus(props: { status: string; t: (key: string) => string }) {
+function AdminLogActions(props: {
+  log: SearchUsageLog
+  onReconcile: (
+    log: SearchUsageLog,
+    action: SearchUsageReconciliationAction
+  ) => void
+  disabled: boolean
+  justifyEnd?: boolean
+}) {
+  const { t } = useTranslation()
+  const actions = getReconciliationActions(props.log)
+  const terminalLabelKey = getTerminalReconciliationLabelKey(props.log)
+  const terminalLabel = terminalLabelKey ? t(terminalLabelKey) : ''
+  if (actions.length === 0 && !terminalLabel) return null
+
+  return (
+    <div
+      className={cn('flex flex-wrap gap-2', props.justifyEnd && 'justify-end')}
+    >
+      {terminalLabel && (
+        <span
+          className='text-muted-foreground text-xs'
+          title={props.log.reconciliation_note}
+        >
+          {terminalLabel}
+        </span>
+      )}
+      {actions.map((action) => {
+        const retry = props.log.reconciliation_action === action
+        let label = t('Refund reservation')
+        if (action === 'settle') {
+          label = retry ? t('Retry settlement') : t('Settle charge')
+        } else if (retry) {
+          label = t('Retry refund')
+        }
+        return (
+          <Button
+            key={action}
+            variant={action === 'settle' ? 'outline' : 'destructive'}
+            size='xs'
+            disabled={props.disabled}
+            onClick={() => props.onReconcile(props.log, action)}
+          >
+            {label}
+          </Button>
+        )
+      })}
+    </div>
+  )
+}
+
+function getTerminalReconciliationLabelKey(log: SearchUsageLog) {
+  const billingState = log.billing_state?.toLocaleLowerCase()
+  if (log.reconciliation_action === 'settle' && billingState === 'committed') {
+    return 'Settled by admin'
+  }
+  if (log.reconciliation_action === 'refund' && billingState === 'refunded') {
+    return 'Refunded by admin'
+  }
+  return ''
+}
+
+function ReconciliationDialog(props: {
+  reconciliation: {
+    log: SearchUsageLog
+    action: SearchUsageReconciliationAction
+  } | null
+  isPending: boolean
+  onOpenChange: (open: boolean) => void
+  onConfirm: (note: string) => void
+}) {
+  const { t } = useTranslation()
+  const form = useForm<UsageReconciliationFormValues>({
+    resolver: zodResolver(usageReconciliationSchema),
+    defaultValues: { note: '' },
+  })
+  const isSettlement = props.reconciliation?.action === 'settle'
+  const noteError = form.formState.errors.note
+  const noteDescriptionID = 'search-usage-reconciliation-note-description'
+  const noteErrorID = 'search-usage-reconciliation-note-error'
+
+  useEffect(() => {
+    const existingNote =
+      props.reconciliation &&
+      props.reconciliation.log.reconciliation_action ===
+        props.reconciliation.action
+        ? props.reconciliation.log.reconciliation_note || ''
+        : ''
+    form.reset({ note: existingNote })
+  }, [form, props.reconciliation])
+
+  return (
+    <AlertDialog
+      open={props.reconciliation !== null}
+      onOpenChange={props.onOpenChange}
+    >
+      <AlertDialogContent>
+        <form
+          className='space-y-4'
+          noValidate
+          onSubmit={form.handleSubmit((values) =>
+            props.onConfirm(values.note.trim())
+          )}
+        >
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {isSettlement
+                ? t('Settle this vSearch request?')
+                : t('Refund this vSearch reservation?')}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {isSettlement
+                ? t(
+                    'Confirm the upstream request completed and charge the reserved amount.'
+                  )
+                : t(
+                    'Confirm the upstream request did not complete and return the reserved amount.'
+                  )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <Field data-invalid={Boolean(noteError)}>
+            <FieldLabel htmlFor='search-usage-reconciliation-note'>
+              {t('Operator note')}
+            </FieldLabel>
+            <Textarea
+              id='search-usage-reconciliation-note'
+              maxLength={255}
+              disabled={props.isPending}
+              placeholder={t('Describe the evidence used for this decision.')}
+              aria-invalid={Boolean(noteError)}
+              aria-describedby={noteError ? noteErrorID : noteDescriptionID}
+              {...form.register('note')}
+            />
+            <FieldDescription id={noteDescriptionID}>
+              {t('An audit note is required for this financial action.')}
+            </FieldDescription>
+            <FieldError
+              id={noteErrorID}
+              errors={
+                noteError
+                  ? [{ message: t(String(noteError.message)) }]
+                  : undefined
+              }
+            />
+          </Field>
+          <AlertDialogFooter>
+            <AlertDialogCancel type='button' disabled={props.isPending}>
+              {t('Cancel')}
+            </AlertDialogCancel>
+            <Button
+              type='submit'
+              variant={isSettlement ? 'default' : 'destructive'}
+              disabled={props.isPending}
+            >
+              {isSettlement ? t('Confirm settlement') : t('Confirm refund')}
+            </Button>
+          </AlertDialogFooter>
+        </form>
+      </AlertDialogContent>
+    </AlertDialog>
+  )
+}
+
+function getReconciliationActions(
+  log: SearchUsageLog
+): SearchUsageReconciliationAction[] {
+  if (
+    log.status.toLocaleLowerCase() !== 'indeterminate' ||
+    log.execution_phase?.toLocaleLowerCase() !== 'dispatching'
+  ) {
+    return []
+  }
+
+  const billingState = log.billing_state?.toLocaleLowerCase()
+  if (!log.reconciliation_action) {
+    return billingState === 'reserved' ? ['settle', 'refund'] : []
+  }
+  if (
+    log.reconciliation_action === 'settle' &&
+    ['reserved', 'commit_pending', 'log_pending', 'log_writing'].includes(
+      billingState || ''
+    )
+  ) {
+    return ['settle']
+  }
+  if (
+    log.reconciliation_action === 'refund' &&
+    ['reserved', 'refund_pending', 'refund_failed'].includes(billingState || '')
+  ) {
+    return ['refund']
+  }
+  return []
+}
+
+function LogStatus(props: { status: string }) {
+  const { t } = useTranslation()
   const status = props.status.toLocaleLowerCase()
   if (status === 'pending') {
     return (
-      <StatusBadge
-        label={props.t('Pending')}
-        variant='warning'
-        copyable={false}
-      />
+      <StatusBadge label={t('Pending')} variant='warning' copyable={false} />
     )
   }
   if (status === 'indeterminate') {
     return (
       <StatusBadge
-        label={props.t('Indeterminate')}
+        label={t('Indeterminate')}
         variant='neutral'
         copyable={false}
       />
@@ -538,7 +849,7 @@ function LogStatus(props: { status: string; t: (key: string) => string }) {
   const success = status === 'success'
   return (
     <StatusBadge
-      label={success ? props.t('Success') : props.t('Error')}
+      label={success ? t('Success') : t('Error')}
       variant={success ? 'success' : 'danger'}
       copyable={false}
     />
@@ -576,7 +887,13 @@ function formatUsageMoney(
   value: { micros?: number; amount?: number }
 ) {
   const status = log.status.toLocaleLowerCase()
-  if (status === 'pending' || status === 'indeterminate') return '—'
+  if (status === 'pending') return '—'
+  if (
+    status === 'indeterminate' &&
+    log.billing_state?.toLocaleLowerCase() !== 'committed'
+  ) {
+    return '—'
+  }
   return formatCnyMoney(value)
 }
 

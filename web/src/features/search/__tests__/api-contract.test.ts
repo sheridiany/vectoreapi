@@ -11,18 +11,16 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { api } from '@/lib/api'
 
 import {
-  createAdminSearchAgentKey,
-  createAdminSearchInstallToken,
+  createSearchAgentKey,
+  createSearchInstallToken,
   createSearchUpstreamAccount,
   deleteSearchUpstreamAccount,
-  fetchAdminSearchAgentKeys,
+  fetchSearchAgentKeys,
   fetchSearchCapabilityEnterpriseGrants,
-  fetchSearchAgentKeyOwnerCandidates,
   fetchSearchGrantEnterprises,
   fetchSearchUsageLogs,
-  revokeAdminSearchAgentKey,
-  publishAdminSearchCatalog,
-  syncAdminSearchCatalog,
+  reconcileAdminSearchUsage,
+  revokeSearchAgentKey,
   updateAdminSearchCatalogItem,
   updateSearchCapabilityEnterpriseGrants,
   updateSearchUpstreamAccount,
@@ -47,9 +45,10 @@ describe('vSearch frontend API contract', () => {
     })
 
     await createSearchUpstreamAccount({
+      provider: 'justoneapi_rest',
       name: 'Primary',
       api_key: 'ak_live_secret',
-      base_url: 'https://api.agentkey.app/v1/mcp',
+      base_url: 'https://api.justoneapi.com',
       pool_id: 3,
       weight: 5,
       priority: 1,
@@ -59,8 +58,9 @@ describe('vSearch frontend API contract', () => {
     expect(api.post).toHaveBeenCalledWith(
       '/api/search/admin/upstream-accounts',
       {
+        provider: 'justoneapi_rest',
         name: 'Primary',
-        base_url: 'https://api.agentkey.app/v1/mcp',
+        base_url: 'https://api.justoneapi.com',
         secret: 'ak_live_secret',
         pool_id: 3,
         weight: 5,
@@ -70,7 +70,7 @@ describe('vSearch frontend API contract', () => {
     )
   })
 
-  test('uses the managed AgentKey API instead of upstream-account routes', async () => {
+  test('uses the dedicated user vSearch key routes', async () => {
     vi.mocked(api.get).mockResolvedValue({
       data: { success: true, data: [] },
     })
@@ -78,7 +78,7 @@ describe('vSearch frontend API contract', () => {
       .mockResolvedValueOnce({
         data: {
           success: true,
-          data: { id: 7, user_id: 3, secret: 'vr_live_secret' },
+          data: { id: 9, user_id: 3, secret: 'vr_live_secret' },
         },
       })
       .mockResolvedValueOnce({
@@ -89,104 +89,21 @@ describe('vSearch frontend API contract', () => {
       })
     vi.mocked(api.delete).mockResolvedValue({ data: { success: true } })
 
-    await fetchAdminSearchAgentKeys()
-    await createAdminSearchAgentKey({
-      user_id: 3,
-      name: 'ops-bot',
+    await fetchSearchAgentKeys()
+    await createSearchAgentKey('research-bot', ['web-search'])
+    await createSearchInstallToken(9)
+    await revokeSearchAgentKey(9)
+
+    expect(api.get).toHaveBeenCalledWith('/api/search/keys')
+    expect(api.post).toHaveBeenNthCalledWith(1, '/api/search/keys', {
+      name: 'research-bot',
       scopes: ['web-search'],
     })
-    await createAdminSearchInstallToken(7)
-    await revokeAdminSearchAgentKey(7)
-
-    expect(api.get).toHaveBeenCalledWith('/api/search/admin/agent-keys')
-    expect(api.post).toHaveBeenNthCalledWith(
-      1,
-      '/api/search/admin/agent-keys',
-      {
-        user_id: 3,
-        name: 'ops-bot',
-        scopes: ['web-search'],
-      }
-    )
     expect(api.post).toHaveBeenNthCalledWith(
       2,
-      '/api/search/admin/agent-keys/7/install-token'
+      '/api/search/keys/9/install-token'
     )
-    expect(api.delete).toHaveBeenCalledWith('/api/search/admin/agent-keys/7')
-  })
-
-  test('scopes AgentKey owner candidates to enterprise members', async () => {
-    vi.mocked(api.get).mockResolvedValue({
-      data: {
-        success: true,
-        data: {
-          items: [
-            {
-              user_id: 3,
-              status: 1,
-              user: {
-                id: 3,
-                username: 'alice',
-                display_name: 'Alice',
-              },
-            },
-            {
-              user_id: 4,
-              status: 2,
-              user: { id: 4, username: 'disabled' },
-            },
-          ],
-          total: 2,
-          page: 1,
-          page_size: 100,
-        },
-      },
-    })
-
-    const candidates = await fetchSearchAgentKeyOwnerCandidates(11)
-
-    expect(api.get).toHaveBeenCalledWith('/api/enterprise/11/members', {
-      params: { p: 1, page_size: 100 },
-    })
-    expect(candidates).toEqual([
-      { id: 3, username: 'alice', display_name: 'Alice' },
-    ])
-  })
-
-  test('loads platform AgentKey owner candidates from enabled users for root', async () => {
-    vi.mocked(api.get).mockResolvedValue({
-      data: {
-        success: true,
-        data: {
-          items: [
-            {
-              id: 1,
-              status: 1,
-              username: 'root',
-              display_name: 'Root',
-            },
-            { id: 2, status: 2, username: 'disabled' },
-          ],
-          total: 2,
-          page: 1,
-          page_size: 100,
-        },
-      },
-    })
-
-    const candidates = await fetchSearchAgentKeyOwnerCandidates()
-
-    expect(api.get).toHaveBeenCalledWith('/api/user/', {
-      params: {
-        p: 1,
-        page_size: 100,
-        sort_by: 'username',
-        sort_order: 'asc',
-      },
-    })
-    expect(candidates).toEqual([
-      { id: 1, username: 'root', display_name: 'Root' },
-    ])
+    expect(api.delete).toHaveBeenCalledWith('/api/search/keys/9')
   })
 
   test('maps dashboard pagination and range to p and days query fields', async () => {
@@ -216,6 +133,45 @@ describe('vSearch frontend API contract', () => {
     })
   })
 
+  test('sends an audited manual reconciliation to the exact admin request route', async () => {
+    vi.mocked(api.post).mockResolvedValue({
+      data: {
+        success: true,
+        data: {
+          id: 17,
+          request_id: 'request-17',
+          status: 'indeterminate',
+          billing_state: 'refunded',
+          reconciliation_action: 'refund',
+          reconciliation_note: 'No upstream completion evidence',
+          reconciled_by: 9,
+          reconciled_at: 1_788_000_000,
+          started: true,
+        },
+      },
+    })
+
+    const result = await reconcileAdminSearchUsage(17, {
+      action: 'refund',
+      note: 'No upstream completion evidence',
+    })
+
+    expect(api.post).toHaveBeenCalledWith(
+      '/api/search/admin/usage-logs/17/reconcile',
+      {
+        action: 'refund',
+        note: 'No upstream completion evidence',
+      }
+    )
+    expect(result).toEqual(
+      expect.objectContaining({
+        id: 17,
+        reconciliation_action: 'refund',
+        started: true,
+      })
+    )
+  })
+
   test('updates catalog prices through the exact micros field', async () => {
     vi.mocked(api.patch).mockResolvedValue({
       data: { success: true, data: { id: 'brave', price_micros: 1 } },
@@ -230,63 +186,6 @@ describe('vSearch frontend API contract', () => {
     )
   })
 
-  test('publishes only the service ids returned by the latest catalog sync', async () => {
-    vi.mocked(api.post)
-      .mockResolvedValueOnce({
-        data: {
-          success: true,
-          data: {
-            synced: 2,
-            published: 2,
-            skipped: 0,
-            failures: [],
-            synced_service_ids: ['vr_svc_brave', 'vr_svc_firecrawl'],
-          },
-        },
-      })
-      .mockResolvedValueOnce({
-        data: {
-          success: true,
-          data: {
-            published: 1,
-            skipped: 1,
-            published_service_ids: ['vr_svc_brave'],
-            skipped_services: [
-              {
-                service_id: 'vr_svc_firecrawl',
-                reason: 'schema_unavailable',
-              },
-            ],
-          },
-        },
-      })
-
-    const syncResult = await syncAdminSearchCatalog()
-    const publishResult = await publishAdminSearchCatalog({
-      service_ids: syncResult.synced_service_ids,
-      access_mode: 'all_enterprises',
-    })
-
-    expect(api.post).toHaveBeenNthCalledWith(
-      1,
-      '/api/search/admin/catalog/sync',
-      undefined,
-      { skipErrorHandler: true, skipBusinessError: true }
-    )
-    expect(api.post).toHaveBeenNthCalledWith(
-      2,
-      '/api/search/admin/catalog/publish',
-      {
-        service_ids: ['vr_svc_brave', 'vr_svc_firecrawl'],
-        access_mode: 'all_enterprises',
-      },
-      { skipErrorHandler: true, skipBusinessError: true }
-    )
-    expect(publishResult).toEqual(
-      expect.objectContaining({ published: 1, skipped: 1 })
-    )
-  })
-
   test('updates the complete account record and deletes by numeric id', async () => {
     vi.mocked(api.patch).mockResolvedValue({
       data: { success: true, data: { id: 7 } },
@@ -295,8 +194,9 @@ describe('vSearch frontend API contract', () => {
 
     await updateSearchUpstreamAccount({
       id: 7,
+      provider: 'justoneapi_rest',
       name: 'Primary',
-      base_url: 'https://api.agentkey.app/v1/mcp',
+      base_url: 'https://api.justoneapi.com',
       pool_id: 3,
       weight: 5,
       priority: 1,
@@ -307,8 +207,9 @@ describe('vSearch frontend API contract', () => {
     expect(api.patch).toHaveBeenCalledWith(
       '/api/search/admin/upstream-accounts/7',
       {
+        provider: 'justoneapi_rest',
         name: 'Primary',
-        base_url: 'https://api.agentkey.app/v1/mcp',
+        base_url: 'https://api.justoneapi.com',
         secret: '',
         pool_id: 3,
         weight: 5,
@@ -328,9 +229,10 @@ describe('vSearch frontend API contract', () => {
 
     await updateSearchUpstreamAccount({
       id: 7,
+      provider: 'tikhub_rest',
       name: 'Primary',
       api_key: '  ak_live_replacement  ',
-      base_url: 'https://api.agentkey.app/v1/mcp',
+      base_url: 'https://api.tikhub.io',
       pool_id: 3,
       weight: 5,
       priority: 1,

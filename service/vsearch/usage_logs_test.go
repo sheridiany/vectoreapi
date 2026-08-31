@@ -42,8 +42,8 @@ func TestListUsageLogsBulkLoadsDisplayNames(t *testing.T) {
 		require.NoError(t, key.SetScopes(nil))
 		require.NoError(t, model.DB.Create(key).Error)
 		require.NoError(t, model.DB.Create(&model.SearchUpstreamAccount{
-			Id: index, PoolID: 1, Provider: model.SearchUpstreamProviderAgentKeyMCP,
-			Name: fmt.Sprintf("account-%d", index), BaseURL: DefaultAgentKeyMCPURL,
+			Id: index, PoolID: 1, Provider: model.SearchUpstreamProviderTikHub,
+			Name: fmt.Sprintf("account-%d", index), BaseURL: DefaultTikHubBaseURL,
 			SecretCiphertext: "ciphertext", SecretNonce: "nonce", SecretVersion: 1,
 			SecretPrefix: "ak_live_test", Status: model.SearchUpstreamAccountStatusHealthy,
 		}).Error)

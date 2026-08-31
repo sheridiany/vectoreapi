@@ -110,6 +110,9 @@ func (control *ControlPlane) publishCatalog(_ context.Context, command PublishCo
 		healthyRoute := false
 		allowedBindingIDs := make([]int, 0, len(bindingsByCapability[capability.Id]))
 		for _, binding := range bindingsByCapability[capability.Id] {
+			if !model.IsSearchCapabilityBindingExecutable(capability.ContractVersion, binding) {
+				continue
+			}
 			if !searchToolAllowed(binding.ToolName) {
 				continue
 			}

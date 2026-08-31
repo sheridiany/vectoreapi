@@ -46,7 +46,7 @@ describe('vSearch user logs page', () => {
           endpoint: '/v1/search',
           status: 'pending',
           latency_ms: 1500,
-          agent_key_name: 'research-bot',
+          key_name: 'research-bot',
           request_id: 'request-1',
         },
       ],
@@ -86,7 +86,7 @@ describe('vSearch user logs page', () => {
     expect(screen.queryByRole('tablist')).not.toBeInTheDocument()
   })
 
-  test('refetches when the service or AgentKey query changes', async () => {
+  test('refetches when the service or vSearch key query changes', async () => {
     const user = userEvent.setup()
     renderLogs()
     await screen.findAllByText('Brave Search')

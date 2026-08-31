@@ -20,14 +20,17 @@ import { describe, expect, test } from 'vitest'
 
 import {
   createUpstreamAccountSchema,
+  getUpstreamProviderDefaultURL,
   getUpstreamAccountServerFormError,
+  UPSTREAM_ACCOUNT_FORM_DEFAULTS,
   updateUpstreamAccountSchema,
 } from '../upstream-account-form'
 
 const validAccount = {
+  provider: 'justoneapi_rest' as const,
   name: 'Primary account',
   api_key: 'ak_live_secret',
-  base_url: 'https://api.agentkey.app/v1/mcp',
+  base_url: 'https://api.justoneapi.com',
   pool_id: 0,
   weight: 1,
   priority: 0,
@@ -58,11 +61,11 @@ describe('upstream account form schema', () => {
   test('rejects remote HTTP endpoints but allows loopback HTTP', () => {
     const remoteResult = createUpstreamAccountSchema.safeParse({
       ...validAccount,
-      base_url: 'http://relay.example.com/v1/mcp',
+      base_url: 'http://relay.example.com',
     })
     const loopbackResult = createUpstreamAccountSchema.safeParse({
       ...validAccount,
-      base_url: 'http://127.0.0.1:3100/v1/mcp',
+      base_url: 'http://127.0.0.1:3100',
     })
 
     expect(remoteResult.success).toBe(false)
@@ -86,12 +89,29 @@ describe('upstream account form schema', () => {
     ])
   })
 
-  test('maps an AgentKey URL rejection to the URL field', () => {
+  test('maps a provider URL rejection to the URL field', () => {
     const result = getUpstreamAccountServerFormError(
-      new Error('AgentKey MCP URL must use HTTPS')
+      new Error('provider base URL must use HTTPS')
     )
 
     expect(result.field).toBe('base_url')
+  })
+
+  test('supports only direct JustOneAPI and TikHub providers', () => {
+    const legacyResult = createUpstreamAccountSchema.safeParse({
+      ...validAccount,
+      provider: 'agentkey_mcp',
+    })
+
+    expect(legacyResult.success).toBe(false)
+    expect(UPSTREAM_ACCOUNT_FORM_DEFAULTS.provider).toBe('tikhub_rest')
+    expect(UPSTREAM_ACCOUNT_FORM_DEFAULTS.status).toBe('healthy')
+    expect(getUpstreamProviderDefaultURL('justoneapi_rest')).toBe(
+      'https://api.justoneapi.com'
+    )
+    expect(getUpstreamProviderDefaultURL('tikhub_rest')).toBe(
+      'https://api.tikhub.io'
+    )
   })
 
   test('uses an HTTP response message when mapping a field rejection', () => {

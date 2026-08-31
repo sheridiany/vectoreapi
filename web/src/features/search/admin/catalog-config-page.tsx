@@ -84,13 +84,9 @@ export function SearchAdminCatalogPage() {
   const syncMutation = useMutation({
     mutationFn: syncAdminSearchCatalog,
     onSuccess: (result) => {
-      const message = t(
-        '{{published}} capabilities published; {{skipped}} skipped',
-        {
-          published: result.published,
-          skipped: result.skipped,
-        }
-      )
+      const message = t('{{count}} capabilities synchronized', {
+        count: result.synced_service_ids.length,
+      })
       if (result.failures.length > 0) {
         toast.warning(message, { description: result.failures.join('；') })
       } else {
@@ -393,7 +389,8 @@ function CatalogTable(props: {
                   checked={item.enabled}
                   disabled={
                     props.pendingId !== null ||
-                    item.schema_status === 'unavailable'
+                    item.schema_status === 'unavailable' ||
+                    item.contract_status !== 'verified'
                   }
                   onCheckedChange={(enabled) =>
                     props.onUpdate(item.id, { enabled })
@@ -430,7 +427,11 @@ function CatalogCard(props: {
         <Switch
           aria-label={t('Enable {{name}}', { name: item.name })}
           checked={item.enabled}
-          disabled={props.pending || props.item.schema_status === 'unavailable'}
+          disabled={
+            props.pending ||
+            props.item.schema_status === 'unavailable' ||
+            props.item.contract_status !== 'verified'
+          }
           onCheckedChange={(enabled) => props.onUpdate({ enabled })}
         />
       </div>
@@ -678,6 +679,9 @@ function catalogAvailabilityLabel(
 ) {
   if (item.schema_status === 'unavailable') {
     return t('Parameter schema unavailable')
+  }
+  if (item.contract_status !== 'verified') {
+    return t('Response contract pending verification')
   }
   return item.enabled ? t('Enabled') : t('Disabled')
 }

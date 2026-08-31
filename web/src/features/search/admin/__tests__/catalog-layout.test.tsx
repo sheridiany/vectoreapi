@@ -17,7 +17,6 @@ vi.mock('../../api', () => ({
   fetchAdminSearchCatalog: vi.fn(),
   fetchSearchCapabilityEnterpriseGrants: vi.fn(),
   fetchSearchGrantEnterprises: vi.fn(),
-  publishAdminSearchCatalog: vi.fn(),
   syncAdminSearchCatalog: vi.fn(),
   updateAdminSearchCatalogItem: vi.fn(),
   updateSearchCapabilityEnterpriseGrants: vi.fn(),
@@ -40,7 +39,8 @@ describe('vSearch admin catalog layout', () => {
       category: 'Weather',
       description: longDescription,
       status: 'unavailable',
-      schema_status: 'unavailable',
+      schema_status: 'available',
+      contract_status: 'unverified',
       enabled: false,
       interface_count: 0,
       upstream_cost_micros: 100_000,
@@ -64,5 +64,13 @@ describe('vSearch admin catalog layout', () => {
 
     expect(desktopDescription).toBeDefined()
     expect(desktopDescription).toHaveClass('whitespace-normal', 'break-words')
+    expect(
+      screen.getAllByText('Response contract pending verification')
+    ).not.toHaveLength(0)
+    expect(
+      screen
+        .getAllByRole('switch')
+        .every((control) => control.getAttribute('aria-disabled') === 'true')
+    ).toBe(true)
   })
 })

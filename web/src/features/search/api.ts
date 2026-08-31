@@ -41,12 +41,6 @@ export type SearchInstallToken = {
   expires_at: number
 }
 
-export type SearchAgentKeyOwnerCandidate = {
-  id: number
-  username: string
-  display_name?: string
-}
-
 type ApiResponse<T> = { success: boolean; message?: string; data?: T }
 
 export type SearchCatalogStatus =
@@ -62,8 +56,11 @@ export type SearchCatalogItem = {
   description: string
   status: SearchCatalogStatus
   schema_status?: 'available' | 'unavailable'
+  contract_status: 'verified' | 'unverified'
   enabled: boolean
   interface_count: number
+  available_interface_count?: number
+  supported_platforms?: string[]
   healthy_route_count?: number
   cost_label?: string
   recent_latency_ms?: number | null
@@ -81,7 +78,7 @@ export type SearchUsageLog = {
   endpoint: string
   status: 'success' | 'error' | string
   latency_ms: number
-  agent_key_name?: string
+  key_name?: string
   request_id?: string
   charge?: number
   charge_micros?: number
@@ -93,6 +90,31 @@ export type SearchUsageLog = {
   profit?: number
   profit_micros?: number
   error_code?: string
+  execution_phase?: string
+  billing_state?: string
+  reconciliation_action?: SearchUsageReconciliationAction
+  reconciliation_note?: string
+  reconciled_by?: number
+  reconciled_at?: number | string
+}
+
+export type SearchUsageReconciliationAction = 'settle' | 'refund'
+
+export type SearchUsageReconciliationInput = {
+  action: SearchUsageReconciliationAction
+  note: string
+}
+
+export type SearchUsageReconciliationResult = {
+  id: number
+  request_id: string
+  status: string
+  billing_state: string
+  reconciliation_action: SearchUsageReconciliationAction
+  reconciliation_note: string
+  reconciled_by: number
+  reconciled_at: number
+  started: boolean
 }
 
 export type SearchUsageStats = {
@@ -128,15 +150,18 @@ export type SearchLogParams = {
   status?: string
 }
 
+export type SearchUpstreamProvider = 'justoneapi_rest' | 'tikhub_rest'
+
 export type SearchUpstreamAccount = {
   id: number
   name: string
-  provider: string
+  provider: SearchUpstreamProvider
   base_url: string
   key_prefix: string
   plan: string
   balance: number
   balance_micros: number
+  balance_currency: string
   weight: number
   priority: number
   pool: string
@@ -147,6 +172,7 @@ export type SearchUpstreamAccount = {
 }
 
 export type CreateSearchUpstreamAccount = {
+  provider: SearchUpstreamProvider
   name: string
   api_key: string
   base_url: string
@@ -175,16 +201,6 @@ export type SearchCatalogSyncResult = {
   synced_service_ids: string[]
 }
 
-export type SearchCatalogPublishResult = {
-  published: number
-  skipped: number
-  published_service_ids: string[]
-  skipped_services: Array<{
-    service_id: string
-    reason: string
-  }>
-}
-
 export type SearchCapabilityEnterpriseGrants = {
   capability_id: string
   access_mode: 'all_enterprises' | 'selected_enterprises'
@@ -208,9 +224,8 @@ function unwrapResponse<T>(response: ApiResponse<T>, fallback: string): T {
 export async function fetchSearchAgentKeys(): Promise<
   SearchAgentKeyApiRecord[]
 > {
-  const response = await api.get<ApiResponse<SearchAgentKeyApiRecord[]>>(
-    '/api/search/agent-keys'
-  )
+  const response =
+    await api.get<ApiResponse<SearchAgentKeyApiRecord[]>>('/api/search/keys')
   if (!response.data.success) {
     throw new Error(response.data.message || 'Request failed')
   }
@@ -222,7 +237,7 @@ export async function createSearchAgentKey(
   scopes: string[]
 ): Promise<CreatedSearchAgentKey> {
   const response = await api.post<ApiResponse<CreatedSearchAgentKey>>(
-    '/api/search/agent-keys',
+    '/api/search/keys',
     { name, scopes }
   )
   if (!response.data.success || !response.data.data) {
@@ -232,9 +247,7 @@ export async function createSearchAgentKey(
 }
 
 export async function revokeSearchAgentKey(id: number): Promise<void> {
-  const response = await api.delete<ApiResponse<null>>(
-    `/api/search/agent-keys/${id}`
-  )
+  const response = await api.delete<ApiResponse<null>>(`/api/search/keys/${id}`)
   if (!response.data.success) {
     throw new Error(response.data.message || 'Request failed')
   }
@@ -244,132 +257,12 @@ export async function createSearchInstallToken(
   id: number
 ): Promise<SearchInstallToken> {
   const response = await api.post<ApiResponse<SearchInstallToken>>(
-    `/api/search/agent-keys/${id}/install-token`
+    `/api/search/keys/${id}/install-token`
   )
   if (!response.data.success || !response.data.data) {
     throw new Error(response.data.message || 'Request failed')
   }
   return response.data.data
-}
-
-export async function fetchAdminSearchAgentKeys(): Promise<
-  SearchAgentKeyApiRecord[]
-> {
-  const response = await api.get<ApiResponse<SearchAgentKeyApiRecord[]>>(
-    '/api/search/admin/agent-keys'
-  )
-  return unwrapResponse(response.data, 'Failed to load vSearch keys')
-}
-
-export async function createAdminSearchAgentKey(input: {
-  user_id: number
-  name: string
-  scopes: string[]
-}): Promise<CreatedSearchAgentKey> {
-  const response = await api.post<ApiResponse<CreatedSearchAgentKey>>(
-    '/api/search/admin/agent-keys',
-    input
-  )
-  return unwrapResponse(response.data, 'Request failed')
-}
-
-export async function revokeAdminSearchAgentKey(id: number): Promise<void> {
-  const response = await api.delete<ApiResponse<null>>(
-    `/api/search/admin/agent-keys/${id}`
-  )
-  if (!response.data.success) {
-    throw new Error(response.data.message || 'Request failed')
-  }
-}
-
-export async function createAdminSearchInstallToken(
-  id: number
-): Promise<SearchInstallToken> {
-  const response = await api.post<ApiResponse<SearchInstallToken>>(
-    `/api/search/admin/agent-keys/${id}/install-token`
-  )
-  return unwrapResponse(response.data, 'Request failed')
-}
-
-export async function fetchSearchAgentKeyOwnerCandidates(
-  enterpriseId?: number
-): Promise<SearchAgentKeyOwnerCandidate[]> {
-  const candidates: SearchAgentKeyOwnerCandidate[] = []
-  let page = 1
-  const pageSize = 100
-
-  while (true) {
-    if (enterpriseId) {
-      const response = await api.get<
-        ApiResponse<{
-          items: Array<{
-            user_id: number
-            status: number
-            user?: {
-              id: number
-              username: string
-              display_name?: string
-            }
-          }>
-          total: number
-          page: number
-          page_size: number
-        }>
-      >(`/api/enterprise/${enterpriseId}/members`, {
-        params: { p: page, page_size: pageSize },
-      })
-      const data = unwrapResponse(response.data, 'Failed to load users')
-      for (const membership of data.items) {
-        if (membership.status === 1 && membership.user) {
-          candidates.push({
-            id: membership.user.id || membership.user_id,
-            username: membership.user.username,
-            display_name: membership.user.display_name,
-          })
-        }
-      }
-      if (data.items.length === 0 || data.page * data.page_size >= data.total) {
-        break
-      }
-    } else {
-      const response = await api.get<
-        ApiResponse<{
-          items: Array<{
-            id: number
-            username: string
-            display_name?: string
-            status: number
-          }>
-          total: number
-          page: number
-          page_size: number
-        }>
-      >('/api/user/', {
-        params: {
-          p: page,
-          page_size: pageSize,
-          sort_by: 'username',
-          sort_order: 'asc',
-        },
-      })
-      const data = unwrapResponse(response.data, 'Failed to load users')
-      for (const user of data.items) {
-        if (user.status === 1) {
-          candidates.push({
-            id: user.id,
-            username: user.username,
-            display_name: user.display_name,
-          })
-        }
-      }
-      if (data.items.length === 0 || data.page * data.page_size >= data.total) {
-        break
-      }
-    }
-    page += 1
-  }
-
-  return candidates
 }
 
 export async function fetchSearchCatalog(): Promise<SearchCatalogItem[]> {
@@ -414,6 +307,7 @@ export async function createSearchUpstreamAccount(
   const response = await api.post<ApiResponse<SearchUpstreamAccount>>(
     '/api/search/admin/upstream-accounts',
     {
+      provider: input.provider,
       name: input.name,
       base_url: input.base_url,
       secret: input.api_key,
@@ -432,6 +326,7 @@ export async function updateSearchUpstreamAccount(
   const response = await api.patch<ApiResponse<SearchUpstreamAccount>>(
     `/api/search/admin/upstream-accounts/${input.id}`,
     {
+      provider: input.provider,
       name: input.name,
       base_url: input.base_url,
       secret: input.api_key?.trim() || '',
@@ -480,18 +375,6 @@ export async function syncAdminSearchCatalog(): Promise<SearchCatalogSyncResult>
     { skipErrorHandler: true, skipBusinessError: true }
   )
   return unwrapResponse(response.data, 'Catalog synchronization failed')
-}
-
-export async function publishAdminSearchCatalog(input: {
-  service_ids: string[]
-  access_mode: 'all_enterprises'
-}): Promise<SearchCatalogPublishResult> {
-  const response = await api.post<ApiResponse<SearchCatalogPublishResult>>(
-    '/api/search/admin/catalog/publish',
-    input,
-    { skipErrorHandler: true, skipBusinessError: true }
-  )
-  return unwrapResponse(response.data, 'Catalog publish failed')
 }
 
 export async function updateAdminSearchCatalogItem(
@@ -565,6 +448,17 @@ export async function fetchAdminSearchUsageStats(
     { params: toSearchUsageParams(params) }
   )
   return unwrapResponse(response.data, 'Failed to load usage statistics')
+}
+
+export async function reconcileAdminSearchUsage(
+  id: number,
+  input: SearchUsageReconciliationInput
+): Promise<SearchUsageReconciliationResult> {
+  const response = await api.post<ApiResponse<SearchUsageReconciliationResult>>(
+    `/api/search/admin/usage-logs/${id}/reconcile`,
+    input
+  )
+  return unwrapResponse(response.data, 'Failed to reconcile usage request')
 }
 
 export async function exportAdminSearchUsageLogs(

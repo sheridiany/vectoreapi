@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -19,13 +20,13 @@ import (
 	"gorm.io/gorm"
 )
 
-type runtimeFakeConnector struct {
-	findResult     any
-	findErrByQuery map[string]error
-	describeResult any
+type runtimeFakeAdapter struct {
+	probeState     AccountState
+	probeErr       error
+	snapshot       CatalogSnapshot
+	snapshotErr    error
 	executeResult  any
-	accountResult  any
-	accountErr     error
+	executeAttempt AttemptResult
 	executeErr     error
 	executeCalls   int
 	executeStarted chan struct{}
@@ -60,42 +61,47 @@ func (charge *runtimeFakeCharge) potentialChargeMicros() int64 {
 func (*runtimeFakeCharge) billingSource() string { return "test" }
 func (*runtimeFakeCharge) reservedQuota() int    { return 0 }
 
-func (connector *runtimeFakeConnector) Account(context.Context) (any, error) {
-	if connector.accountErr != nil {
-		return nil, connector.accountErr
+func (adapter *runtimeFakeAdapter) Probe(context.Context) (AccountState, error) {
+	if adapter.probeState == (AccountState{}) {
+		adapter.probeState = AccountState{Plan: "test", BalanceAmountMicros: 10_000_000, BalanceCurrency: "CNY"}
 	}
-	if connector.accountResult != nil {
-		return connector.accountResult, nil
-	}
-	return map[string]any{"plan": "test", "balance": float64(10)}, nil
+	return adapter.probeState, adapter.probeErr
 }
 
-func (connector *runtimeFakeConnector) FindTools(_ context.Context, query string, _ string) (any, error) {
-	if err := connector.findErrByQuery[query]; err != nil {
-		return nil, err
+func (adapter *runtimeFakeAdapter) SnapshotCatalog(context.Context) (CatalogSnapshot, error) {
+	if adapter.snapshot.Provider == "" {
+		adapter.snapshot = standardProviderCatalog(ProviderTikHub)
 	}
-	return connector.findResult, nil
+	return adapter.snapshot, adapter.snapshotErr
 }
 
-func (connector *runtimeFakeConnector) DescribeTool(context.Context, string) (any, error) {
-	return connector.describeResult, nil
-}
-
-func (connector *runtimeFakeConnector) ExecuteTool(context.Context, string, map[string]any) (any, error) {
-	connector.executeCalls++
-	if connector.executeStarted != nil {
+func (adapter *runtimeFakeAdapter) Execute(context.Context, ProviderOperation, CanonicalRequest) (AttemptResult, error) {
+	adapter.executeCalls++
+	if adapter.executeStarted != nil {
 		select {
-		case connector.executeStarted <- struct{}{}:
+		case adapter.executeStarted <- struct{}{}:
 		default:
 		}
 	}
-	if connector.executeRelease != nil {
-		<-connector.executeRelease
+	if adapter.executeRelease != nil {
+		<-adapter.executeRelease
 	}
-	if connector.executeHook != nil {
-		connector.executeHook()
+	if adapter.executeHook != nil {
+		adapter.executeHook()
 	}
-	return connector.executeResult, connector.executeErr
+	attempt := adapter.executeAttempt
+	if attempt.Data == nil {
+		attempt.Data = adapter.executeResult
+	}
+	if adapter.executeErr == nil {
+		billable := true
+		attempt.Dispatched = true
+		attempt.Billable = &billable
+		if attempt.HTTPStatus == 0 {
+			attempt.HTTPStatus = http.StatusOK
+		}
+	}
+	return attempt, adapter.executeErr
 }
 
 func openRuntimeTestDB(t *testing.T) {
@@ -138,7 +144,7 @@ func openRuntimeTestDB(t *testing.T) {
 	t.Setenv(LocalSecretFileEnv, "")
 }
 
-func seedRuntimeExecution(t *testing.T, connector *runtimeFakeConnector) (*ExecutionRuntime, Principal, *model.SearchCapability) {
+func seedRuntimeExecution(t *testing.T, adapter *runtimeFakeAdapter) (*ExecutionRuntime, Principal, *model.SearchCapability) {
 	t.Helper()
 	user := &model.User{
 		Id: 7, Username: "vsearch-user", Password: "test-password", Status: common.UserStatusEnabled,
@@ -150,7 +156,7 @@ func seedRuntimeExecution(t *testing.T, connector *runtimeFakeConnector) (*Execu
 	encrypted, err := EncryptUpstreamSecret("ak_live_runtime")
 	require.NoError(t, err)
 	account := &model.SearchUpstreamAccount{
-		PoolID: pool.Id, Name: "primary", BaseURL: DefaultAgentKeyMCPURL,
+		PoolID: pool.Id, Name: "primary", BaseURL: DefaultTikHubBaseURL,
 		SecretCiphertext: encrypted.Ciphertext, SecretNonce: encrypted.Nonce,
 		SecretVersion: encrypted.Version, SecretPrefix: UpstreamSecretPrefix("ak_live_runtime"),
 		Status: model.SearchUpstreamAccountStatusHealthy,
@@ -169,21 +175,21 @@ func seedRuntimeExecution(t *testing.T, connector *runtimeFakeConnector) (*Execu
 		InputSchema: capability.InputSchema, Status: model.SearchCapabilityBindingStatusEnabled,
 		UpstreamCostMicros: 100_000,
 	}))
-	runtime := NewExecutionRuntime(func(*model.SearchUpstreamAccount, string) (UpstreamConnector, error) { return connector, nil })
+	runtime := NewExecutionRuntime(func(*model.SearchUpstreamAccount, string) (ProviderAdapter, error) { return adapter, nil })
 	return runtime, Principal{UserID: 7, EnterpriseID: 11, AgentKeyID: 21, Scopes: []string{"web-search"}}, capability
 }
 
 func TestExecutionRuntimeRejectsInvalidParamsBeforeDispatchOrUsage(t *testing.T) {
 	openRuntimeTestDB(t)
-	connector := &runtimeFakeConnector{}
-	runtime, principal, capability := seedRuntimeExecution(t, connector)
+	adapter := &runtimeFakeAdapter{}
+	runtime, principal, capability := seedRuntimeExecution(t, adapter)
 
 	_, err := runtime.Execute(context.Background(), principal, ExecuteCommand{ServiceID: capability.PublicID, Params: map[string]any{"query": float64(42)}})
 	require.Error(t, err)
 	var publicErr *PublicError
 	require.ErrorAs(t, err, &publicErr)
 	assert.Equal(t, "INVALID_TOOL_PARAMS", publicErr.Code)
-	assert.Zero(t, connector.executeCalls)
+	assert.Zero(t, adapter.executeCalls)
 	_, total, listErr := model.ListSearchUsageEvents(model.SearchUsageQuery{UserID: principal.UserID})
 	require.NoError(t, listErr)
 	require.Equal(t, int64(1), total)
@@ -198,9 +204,9 @@ func TestValidateCapabilityParamsEnforcesParameterConstraints(t *testing.T) {
 		"type":"object",
 		"additionalProperties":false,
 		"properties":{
-			"query":{"type":"string","enum":["news","web"]},
+			"query":{"type":"string","enum":["news","web"],"minLength":3,"maxLength":4},
 			"page":{"type":"integer","minimum":1,"maximum":10},
-			"scores":{"type":"array","items":{"type":"number"}}
+			"scores":{"type":"array","minItems":1,"maxItems":2,"items":{"type":"number"}}
 		}
 	}`
 
@@ -213,6 +219,10 @@ func TestValidateCapabilityParamsEnforcesParameterConstraints(t *testing.T) {
 		{name: "minimum", params: map[string]any{"page": float64(0)}},
 		{name: "maximum", params: map[string]any{"page": float64(11)}},
 		{name: "numeric string", params: map[string]any{"page": "2"}},
+		{name: "string minimum length", params: map[string]any{"query": "we"}},
+		{name: "string maximum length", params: map[string]any{"query": "newss"}},
+		{name: "array minimum items", params: map[string]any{"scores": []any{}}},
+		{name: "array maximum items", params: map[string]any{"scores": []any{float64(1), float64(2), float64(3)}}},
 		{name: "array items", params: map[string]any{"scores": []any{"invalid"}}},
 	}
 	for _, test := range tests {
@@ -225,10 +235,177 @@ func TestValidateCapabilityParamsEnforcesParameterConstraints(t *testing.T) {
 	}, schema))
 }
 
+func TestValidateSchemaValueEnforcesOutputContractConstAndNullableUnion(t *testing.T) {
+	schema := listOutputSchema("trend")
+	valid := map[string]any{
+		"items": []any{map[string]any{"id": "trend-1", "type": "trend", "platform": "douyin"}},
+		"page":  map[string]any{"cursor": nil, "has_more": false},
+	}
+	assert.NoError(t, validateSchemaValue(valid, schema, "$"))
+
+	invalidType := map[string]any{
+		"items": []any{map[string]any{"id": "trend-1", "type": "content", "platform": "douyin"}},
+	}
+	assert.Error(t, validateSchemaValue(invalidType, schema, "$"))
+
+	invalidCursor := map[string]any{
+		"items": []any{},
+		"page":  map[string]any{"cursor": false, "has_more": nil},
+	}
+	assert.Error(t, validateSchemaValue(invalidCursor, schema, "$"))
+}
+
+func TestExecutionRuntimeRefundsAndClosesIdempotencyOnOutputContractMismatch(t *testing.T) {
+	openRuntimeTestDB(t)
+	adapter := &runtimeFakeAdapter{
+		executeAttempt: AttemptResult{ProviderRequestID: "provider-contract-1", CostAmountMicros: 100_000},
+		executeResult: map[string]any{
+			"items": []any{map[string]any{"id": "trend-1", "type": "content", "platform": "douyin"}},
+		},
+	}
+	runtime, principal, capability := seedRuntimeExecution(t, adapter)
+	outputSchemaBytes, err := common.Marshal(listOutputSchema("trend"))
+	require.NoError(t, err)
+	outputSchema := string(outputSchemaBytes)
+	require.NoError(t, model.DB.Model(&model.SearchCapability{}).Where("id = ?", capability.Id).Updates(map[string]any{
+		"operation_key": "social.trend.list", "contract_version": "v1", "output_schema": outputSchema,
+	}).Error)
+	require.NoError(t, model.DB.Model(&model.SearchCapabilityBinding{}).Where("capability_id = ?", capability.Id).Updates(map[string]any{
+		"output_schema": outputSchema, "contract_equivalent": true, "billing_ready": true, "cost_currency": "CNY",
+	}).Error)
+	charge := &runtimeFakeCharge{chargeMicros: capability.PriceMicros}
+	runtime.chargeFactory = func(context.Context, Principal, string, *model.SearchCapability) (executionCharge, error) {
+		return charge, nil
+	}
+	command := ExecuteCommand{
+		ServiceID: capability.PublicID, Params: map[string]any{"query": "news"}, IdempotencyKey: "contract-failure-1",
+	}
+
+	_, err = runtime.Execute(context.Background(), principal, command)
+	var publicErr *PublicError
+	require.ErrorAs(t, err, &publicErr)
+	assert.Equal(t, "UPSTREAM_CONTRACT_MISMATCH", publicErr.Code)
+	assert.Equal(t, 1, adapter.executeCalls)
+	assert.Zero(t, charge.commitCalls)
+	assert.Equal(t, 1, charge.refundCalls)
+
+	_, err = runtime.Execute(context.Background(), principal, command)
+	require.ErrorAs(t, err, &publicErr)
+	assert.Equal(t, "IDEMPOTENCY_REQUEST_RESOLVED", publicErr.Code)
+	assert.Equal(t, 1, adapter.executeCalls, "known paid upstream failures must not be replayed")
+
+	events, total, listErr := model.ListSearchUsageEvents(model.SearchUsageQuery{UserID: principal.UserID})
+	require.NoError(t, listErr)
+	require.Equal(t, int64(1), total)
+	require.Len(t, events, 1)
+	assert.Equal(t, model.SearchUsageStatusFailed, events[0].Status)
+	assert.Equal(t, model.SearchUsageBillingRefunded, events[0].BillingState)
+	assert.Equal(t, int64(100_000), events[0].UpstreamCostMicros)
+	assert.Zero(t, events[0].ChargeMicros)
+	assert.Equal(t, "provider-contract-1", events[0].UpstreamRequestID)
+	var consumeLogCount int64
+	require.NoError(t, model.LOG_DB.Model(&model.Log{}).
+		Where("user_id = ? AND type = ?", principal.UserID, model.LogTypeConsume).Count(&consumeLogCount).Error)
+	assert.Zero(t, consumeLogCount)
+}
+
+func TestExecutionRuntimeAuditsKnownBillableAdapterFailureWithoutReplay(t *testing.T) {
+	openRuntimeTestDB(t)
+	adapter := &runtimeFakeAdapter{
+		executeAttempt: AttemptResult{
+			Dispatched: true, Billable: tikHubBool(true), ProviderRequestID: "provider-shape-1", CostAmountMicros: 100_000,
+		},
+		executeErr: newConnectorError("UPSTREAM_CONTRACT_MISMATCH", http.StatusBadGateway, "上游服务返回的数据不符合能力约定。"),
+	}
+	runtime, principal, capability := seedRuntimeExecution(t, adapter)
+	charge := &runtimeFakeCharge{chargeMicros: capability.PriceMicros}
+	runtime.chargeFactory = func(context.Context, Principal, string, *model.SearchCapability) (executionCharge, error) {
+		return charge, nil
+	}
+	command := ExecuteCommand{
+		ServiceID: capability.PublicID, Params: map[string]any{"query": "news"}, IdempotencyKey: "adapter-contract-failure-1",
+	}
+
+	_, err := runtime.Execute(context.Background(), principal, command)
+	var publicErr *PublicError
+	require.ErrorAs(t, err, &publicErr)
+	assert.Equal(t, "UPSTREAM_CONTRACT_MISMATCH", publicErr.Code)
+	assert.Equal(t, 1, charge.refundCalls)
+
+	_, err = runtime.Execute(context.Background(), principal, command)
+	require.ErrorAs(t, err, &publicErr)
+	assert.Equal(t, "IDEMPOTENCY_REQUEST_RESOLVED", publicErr.Code)
+	assert.Equal(t, 1, adapter.executeCalls)
+
+	events, total, listErr := model.ListSearchUsageEvents(model.SearchUsageQuery{UserID: principal.UserID})
+	require.NoError(t, listErr)
+	require.Equal(t, int64(1), total)
+	assert.Equal(t, model.SearchUsageStatusFailed, events[0].Status)
+	assert.Equal(t, int64(100_000), events[0].UpstreamCostMicros)
+	assert.Zero(t, events[0].ChargeMicros)
+}
+
+func TestExecutionRuntimeKeepsIdempotencyPendingWhenKnownFailureAuditCannotFinalize(t *testing.T) {
+	openRuntimeTestDB(t)
+	callbackName := "test:fail_known_vsearch_failure_finalize"
+	adapter := &runtimeFakeAdapter{
+		executeAttempt: AttemptResult{
+			Dispatched: true, Billable: tikHubBool(true), ProviderRequestID: "provider-audit-failure-1", CostAmountMicros: 100_000,
+		},
+		executeErr: newConnectorError("UPSTREAM_CONTRACT_MISMATCH", http.StatusBadGateway, "上游服务返回的数据不符合能力约定。"),
+		executeHook: func() {
+			require.NoError(t, model.DB.Callback().Update().Before("gorm:update").Register(callbackName, func(tx *gorm.DB) {
+				updates, ok := tx.Statement.Dest.(map[string]any)
+				if tx.Statement.Table == "search_usage_events" && ok && updates["status"] == model.SearchUsageStatusFailed {
+					tx.AddError(errors.New("forced search usage finalize failure"))
+				}
+			}))
+		},
+	}
+	runtime, principal, capability := seedRuntimeExecution(t, adapter)
+	charge := &runtimeFakeCharge{chargeMicros: capability.PriceMicros}
+	runtime.chargeFactory = func(context.Context, Principal, string, *model.SearchCapability) (executionCharge, error) {
+		return charge, nil
+	}
+	command := ExecuteCommand{
+		ServiceID: capability.PublicID, Params: map[string]any{"query": "news"}, IdempotencyKey: "known-audit-failure-1",
+	}
+
+	_, err := runtime.Execute(context.Background(), principal, command)
+	require.Error(t, err)
+	require.NoError(t, model.DB.Callback().Update().Remove(callbackName))
+	var record model.SearchExecutionIdempotency
+	require.NoError(t, model.DB.First(&record).Error)
+	assert.Equal(t, model.SearchExecutionIdempotencyStatusPending, record.Status)
+	var pending model.SearchUsageEvent
+	require.NoError(t, model.DB.Where("request_id = ?", record.UsageRequestID).First(&pending).Error)
+	assert.Equal(t, model.SearchUsageStatusPending, pending.Status)
+	assert.Equal(t, model.SearchUsageBillingRefundPending, pending.BillingState)
+	assert.Equal(t, "provider-audit-failure-1", pending.UpstreamRequestID)
+	assert.Equal(t, int64(100_000), pending.UpstreamCostMicros)
+
+	staleAt := common.GetTimestamp() - model.SearchUsagePendingTimeoutSeconds - 1
+	require.NoError(t, model.DB.Model(&model.SearchUsageEvent{}).Where("id = ?", pending.Id).Update("updated_at", staleAt).Error)
+	require.NoError(t, model.ReconcileStaleSearchUsageEvents(common.GetTimestamp()))
+	require.NoError(t, model.DB.First(&pending, pending.Id).Error)
+	assert.Equal(t, model.SearchUsageStatusFailed, pending.Status)
+	assert.Equal(t, model.SearchUsageBillingRefunded, pending.BillingState)
+	assert.Equal(t, "provider-audit-failure-1", pending.UpstreamRequestID)
+	assert.Equal(t, int64(100_000), pending.UpstreamCostMicros)
+	require.NoError(t, model.DB.First(&record, record.Id).Error)
+	assert.Equal(t, model.SearchExecutionIdempotencyStatusResolved, record.Status)
+
+	_, err = runtime.Execute(context.Background(), principal, command)
+	var publicErr *PublicError
+	require.ErrorAs(t, err, &publicErr)
+	assert.Equal(t, "IDEMPOTENCY_REQUEST_RESOLVED", publicErr.Code)
+	assert.Equal(t, 1, adapter.executeCalls)
+}
+
 func TestExecutionRuntimeRejectsPriceBelowSelectedUpstreamCostBeforeDispatch(t *testing.T) {
 	openRuntimeTestDB(t)
-	connector := &runtimeFakeConnector{}
-	runtime, principal, capability := seedRuntimeExecution(t, connector)
+	adapter := &runtimeFakeAdapter{}
+	runtime, principal, capability := seedRuntimeExecution(t, adapter)
 	require.NoError(t, model.DB.Model(&model.SearchCapabilityBinding{}).
 		Where("capability_id = ?", capability.Id).
 		Update("upstream_cost_micros", int64(300_000)).Error)
@@ -242,20 +419,20 @@ func TestExecutionRuntimeRejectsPriceBelowSelectedUpstreamCostBeforeDispatch(t *
 	var publicErr *PublicError
 	require.ErrorAs(t, err, &publicErr)
 	assert.Equal(t, "CAPABILITY_PRICING_STALE", publicErr.Code)
-	assert.Zero(t, connector.executeCalls)
+	assert.Zero(t, adapter.executeCalls)
 }
 
 func TestDescribeAndExecuteRejectPriceBelowHealthyFallbackCost(t *testing.T) {
 	openRuntimeTestDB(t)
-	connector := &runtimeFakeConnector{}
-	runtime, principal, capability := seedRuntimeExecution(t, connector)
+	adapter := &runtimeFakeAdapter{}
+	runtime, principal, capability := seedRuntimeExecution(t, adapter)
 	accounts, err := model.ListSearchUpstreamAccounts()
 	require.NoError(t, err)
 	require.Len(t, accounts, 1)
 	encrypted, err := EncryptUpstreamSecret("ak_live_fallback")
 	require.NoError(t, err)
 	fallback := &model.SearchUpstreamAccount{
-		PoolID: accounts[0].PoolID, Name: "fallback", BaseURL: DefaultAgentKeyMCPURL,
+		PoolID: accounts[0].PoolID, Name: "fallback", BaseURL: DefaultTikHubBaseURL,
 		SecretCiphertext: encrypted.Ciphertext, SecretNonce: encrypted.Nonce,
 		SecretVersion: encrypted.Version, SecretPrefix: UpstreamSecretPrefix("ak_live_fallback"),
 		Status: model.SearchUpstreamAccountStatusHealthy, Priority: 1,
@@ -278,13 +455,13 @@ func TestDescribeAndExecuteRejectPriceBelowHealthyFallbackCost(t *testing.T) {
 	})
 	require.ErrorAs(t, err, &publicErr)
 	assert.Equal(t, "CAPABILITY_PRICING_STALE", publicErr.Code)
-	assert.Zero(t, connector.executeCalls)
+	assert.Zero(t, adapter.executeCalls)
 }
 
 func TestDescribeAndExecuteRejectStaleBindingSchema(t *testing.T) {
 	openRuntimeTestDB(t)
-	connector := &runtimeFakeConnector{executeResult: map[string]any{"result": "must not run"}}
-	runtime, principal, capability := seedRuntimeExecution(t, connector)
+	adapter := &runtimeFakeAdapter{executeResult: map[string]any{"result": "must not run"}}
+	runtime, principal, capability := seedRuntimeExecution(t, adapter)
 	require.NoError(t, model.DB.Model(&model.SearchUpstreamAccount{}).Where("id > 0").
 		Update("status", model.SearchUpstreamAccountStatusStandby).Error)
 	require.NoError(t, model.DB.Model(&model.SearchCapabilityBinding{}).
@@ -304,13 +481,13 @@ func TestDescribeAndExecuteRejectStaleBindingSchema(t *testing.T) {
 	})
 	require.ErrorAs(t, err, &publicErr)
 	assert.Equal(t, "CAPABILITY_UNAVAILABLE", publicErr.Code)
-	assert.Zero(t, connector.executeCalls)
+	assert.Zero(t, adapter.executeCalls)
 }
 
 func TestExecutionRuntimeRejectsBindingFromNewerSchemaSnapshot(t *testing.T) {
 	openRuntimeTestDB(t)
-	connector := &runtimeFakeConnector{executeResult: map[string]any{"result": "must not run"}}
-	runtime, principal, capability := seedRuntimeExecution(t, connector)
+	adapter := &runtimeFakeAdapter{executeResult: map[string]any{"result": "must not run"}}
+	runtime, principal, capability := seedRuntimeExecution(t, adapter)
 	newSchema := `{"type":"object","required":["url"],"properties":{"url":{"type":"string"}},"additionalProperties":false}`
 
 	var schemaSynced atomic.Bool
@@ -342,25 +519,28 @@ func TestExecutionRuntimeRejectsBindingFromNewerSchemaSnapshot(t *testing.T) {
 	var publicErr *PublicError
 	require.ErrorAs(t, err, &publicErr)
 	assert.Equal(t, "CAPABILITY_UNAVAILABLE", publicErr.Code)
-	assert.Zero(t, connector.executeCalls)
+	assert.Zero(t, adapter.executeCalls)
 }
 
 func TestExecutionRuntimeDispatchesOnceSanitizesAndRecordsExactMicros(t *testing.T) {
 	openRuntimeTestDB(t)
-	connector := &runtimeFakeConnector{executeResult: map[string]any{
-		"data":   []any{map[string]any{"title": "Public result", "toolName": "private/search"}},
-		"apiKey": "must-not-leak", "note": "AgentKey internal",
-	}}
-	runtime, principal, capability := seedRuntimeExecution(t, connector)
+	adapter := &runtimeFakeAdapter{
+		executeAttempt: AttemptResult{ProviderRequestID: "provider-success-1", CostAmountMicros: 999, CostCurrency: "USD"},
+		executeResult: map[string]any{
+			"data":   []any{map[string]any{"title": "Public result", "toolName": "private/search"}},
+			"apiKey": "must-not-leak", "note": "AgentKey internal",
+		},
+	}
+	runtime, principal, capability := seedRuntimeExecution(t, adapter)
 
 	result, err := runtime.Execute(context.Background(), principal, ExecuteCommand{ServiceID: capability.PublicID, Params: map[string]any{"query": "news"}})
 	require.NoError(t, err)
-	assert.Equal(t, 1, connector.executeCalls)
+	assert.Equal(t, 1, adapter.executeCalls)
 	payload, err := common.Marshal(result)
 	require.NoError(t, err)
 	assert.NotContains(t, string(payload), "must-not-leak")
 	assert.NotContains(t, string(payload), "private/search")
-	assert.NotContains(t, strings.ToLower(string(payload)), "agentkey")
+	assert.Contains(t, string(payload), "AgentKey internal", "public result text must not be rewritten by legacy provider cleanup")
 
 	events, total, err := model.ListSearchUsageEvents(model.SearchUsageQuery{UserID: principal.UserID})
 	require.NoError(t, err)
@@ -369,6 +549,7 @@ func TestExecutionRuntimeDispatchesOnceSanitizesAndRecordsExactMicros(t *testing
 	assert.Equal(t, int64(100_000), events[0].UpstreamCostMicros)
 	assert.Equal(t, int64(250_000), events[0].ChargeMicros)
 	assert.Equal(t, model.SearchUsageStatusSucceeded, events[0].Status)
+	assert.Equal(t, "provider-success-1", events[0].UpstreamRequestID)
 
 	userCatalog, err := runtime.ListCatalog(context.Background(), principal, false)
 	require.NoError(t, err)
@@ -381,9 +562,9 @@ func TestExecutionRuntimeDispatchesOnceSanitizesAndRecordsExactMicros(t *testing
 
 func TestExecutionRuntimePersistsPendingAuditBeforeDispatch(t *testing.T) {
 	openRuntimeTestDB(t)
-	connector := &runtimeFakeConnector{executeResult: map[string]any{"result": "ok"}}
-	runtime, principal, capability := seedRuntimeExecution(t, connector)
-	connector.executeHook = func() {
+	adapter := &runtimeFakeAdapter{executeResult: map[string]any{"result": "ok"}}
+	runtime, principal, capability := seedRuntimeExecution(t, adapter)
+	adapter.executeHook = func() {
 		events, total, err := model.ListSearchUsageEvents(model.SearchUsageQuery{UserID: principal.UserID})
 		require.NoError(t, err)
 		require.Equal(t, int64(1), total)
@@ -406,14 +587,17 @@ func TestExecutionRuntimePersistsPendingAuditBeforeDispatch(t *testing.T) {
 
 func TestExecutionRuntimeDoesNotRetryFailedExecute(t *testing.T) {
 	openRuntimeTestDB(t)
-	connector := &runtimeFakeConnector{executeErr: newConnectorError("UPSTREAM_TIMEOUT", 504, "上游服务响应超时。")}
-	runtime, principal, capability := seedRuntimeExecution(t, connector)
+	adapter := &runtimeFakeAdapter{
+		executeAttempt: AttemptResult{ProviderRequestID: "provider-failure-1"},
+		executeErr:     newConnectorError("UPSTREAM_TIMEOUT", 504, "上游服务响应超时。"),
+	}
+	runtime, principal, capability := seedRuntimeExecution(t, adapter)
 	quotaBefore, err := model.GetUserQuota(principal.UserID, true)
 	require.NoError(t, err)
 
 	_, err = runtime.Execute(context.Background(), principal, ExecuteCommand{ServiceID: capability.PublicID, Params: map[string]any{"query": "news"}})
 	require.Error(t, err)
-	assert.Equal(t, 1, connector.executeCalls)
+	assert.Equal(t, 1, adapter.executeCalls)
 	quotaAfter, quotaErr := model.GetUserQuota(principal.UserID, true)
 	require.NoError(t, quotaErr)
 	assert.Equal(t, quotaBefore, quotaAfter, "failed upstream execution must synchronously refund wallet quota")
@@ -430,13 +614,33 @@ func TestExecutionRuntimeDoesNotRetryFailedExecute(t *testing.T) {
 	require.Equal(t, int64(1), total)
 	assert.Equal(t, model.SearchUsageStatusFailed, events[0].Status)
 	assert.Equal(t, "UPSTREAM_TIMEOUT", events[0].ErrorCode)
+	assert.Equal(t, "provider-failure-1", events[0].UpstreamRequestID)
 	assert.Zero(t, events[0].ChargeMicros, "a fully refunded failure must not be reported as charged")
+}
+
+func TestExecutionRuntimeReturnsRetryAfterWithoutReplaying(t *testing.T) {
+	openRuntimeTestDB(t)
+	adapter := &runtimeFakeAdapter{
+		executeAttempt: AttemptResult{RetryAfter: 1500 * time.Millisecond},
+		executeErr:     newConnectorError("UPSTREAM_RATE_LIMITED", http.StatusTooManyRequests, "上游服务请求过于频繁。"),
+	}
+	runtime, principal, capability := seedRuntimeExecution(t, adapter)
+
+	_, err := runtime.Execute(context.Background(), principal, ExecuteCommand{
+		ServiceID: capability.PublicID, Params: map[string]any{"query": "news"},
+	})
+
+	var publicErr *PublicError
+	require.ErrorAs(t, err, &publicErr)
+	assert.Equal(t, http.StatusTooManyRequests, publicErr.HTTPStatus)
+	assert.Equal(t, 2, publicErr.RetryAfterSeconds)
+	assert.Equal(t, 1, adapter.executeCalls)
 }
 
 func TestExecutionRuntimeChargesWalletOnlyAfterSuccessfulCall(t *testing.T) {
 	openRuntimeTestDB(t)
-	connector := &runtimeFakeConnector{executeResult: map[string]any{"result": "ok"}}
-	runtime, principal, capability := seedRuntimeExecution(t, connector)
+	adapter := &runtimeFakeAdapter{executeResult: map[string]any{"result": "ok"}}
+	runtime, principal, capability := seedRuntimeExecution(t, adapter)
 	wantQuota, err := searchChargeMicrosToQuota(capability.PriceMicros)
 	require.NoError(t, err)
 	quotaBefore, err := model.GetUserQuota(principal.UserID, true)
@@ -444,7 +648,7 @@ func TestExecutionRuntimeChargesWalletOnlyAfterSuccessfulCall(t *testing.T) {
 
 	_, err = runtime.Execute(context.Background(), principal, ExecuteCommand{ServiceID: capability.PublicID, Params: map[string]any{"query": "news"}})
 	require.NoError(t, err)
-	assert.Equal(t, 1, connector.executeCalls)
+	assert.Equal(t, 1, adapter.executeCalls)
 	quotaAfter, err := model.GetUserQuota(principal.UserID, true)
 	require.NoError(t, err)
 	assert.Equal(t, quotaBefore-wantQuota, quotaAfter)
@@ -461,8 +665,8 @@ func TestExecutionRuntimeChargesWalletOnlyAfterSuccessfulCall(t *testing.T) {
 
 func TestExecutionRuntimeRejectsInsufficientWalletBeforeUpstream(t *testing.T) {
 	openRuntimeTestDB(t)
-	connector := &runtimeFakeConnector{executeResult: map[string]any{"result": "must not run"}}
-	runtime, principal, capability := seedRuntimeExecution(t, connector)
+	adapter := &runtimeFakeAdapter{executeResult: map[string]any{"result": "must not run"}}
+	runtime, principal, capability := seedRuntimeExecution(t, adapter)
 	wantQuota, err := searchChargeMicrosToQuota(capability.PriceMicros)
 	require.NoError(t, err)
 	require.NoError(t, model.DB.Model(&model.User{}).Where("id = ?", principal.UserID).Update("quota", wantQuota-1).Error)
@@ -472,7 +676,7 @@ func TestExecutionRuntimeRejectsInsufficientWalletBeforeUpstream(t *testing.T) {
 	var publicErr *PublicError
 	require.ErrorAs(t, err, &publicErr)
 	assert.Equal(t, "INSUFFICIENT_QUOTA", publicErr.Code)
-	assert.Zero(t, connector.executeCalls)
+	assert.Zero(t, adapter.executeCalls)
 	quotaAfter, quotaErr := model.GetUserQuota(principal.UserID, true)
 	require.NoError(t, quotaErr)
 	assert.Equal(t, wantQuota-1, quotaAfter)
@@ -485,11 +689,11 @@ func TestExecutionRuntimeRejectsInsufficientWalletBeforeUpstream(t *testing.T) {
 
 func TestSelectExecutionTargetIncludesPositiveWeightAccount(t *testing.T) {
 	openRuntimeTestDB(t)
-	connector := &runtimeFakeConnector{}
-	_, _, capability := seedRuntimeExecution(t, connector)
+	adapter := &runtimeFakeAdapter{}
+	_, _, capability := seedRuntimeExecution(t, adapter)
 	require.NoError(t, model.DB.Model(&model.SearchUpstreamAccount{}).Where("id > 0").Update("weight", 10).Error)
 
-	binding, account, _, err := selectExecutionTarget(capability)
+	binding, account, _, err := selectExecutionTarget(capability, nil)
 	require.NoError(t, err)
 	assert.Equal(t, capability.Id, binding.CapabilityID)
 	assert.Equal(t, 10, account.Weight)
@@ -497,8 +701,8 @@ func TestSelectExecutionTargetIncludesPositiveWeightAccount(t *testing.T) {
 
 func TestExecutionRuntimeCountsFreeSuccessWithoutConsumingQuota(t *testing.T) {
 	openRuntimeTestDB(t)
-	connector := &runtimeFakeConnector{executeResult: map[string]any{"result": "ok"}}
-	runtime, principal, capability := seedRuntimeExecution(t, connector)
+	adapter := &runtimeFakeAdapter{executeResult: map[string]any{"result": "ok"}}
+	runtime, principal, capability := seedRuntimeExecution(t, adapter)
 	require.NoError(t, model.DB.Model(&model.SearchCapability{}).Where("id = ?", capability.Id).
 		Updates(map[string]any{"price_micros": 0, "upstream_cost_micros": 0}).Error)
 	require.NoError(t, model.DB.Model(&model.SearchCapabilityBinding{}).Where("capability_id = ?", capability.Id).
@@ -519,8 +723,8 @@ func TestExecutionRuntimeCountsFreeSuccessWithoutConsumingQuota(t *testing.T) {
 
 func TestExecutionRuntimeChargesSubscriptionOnSuccess(t *testing.T) {
 	openRuntimeTestDB(t)
-	connector := &runtimeFakeConnector{executeResult: map[string]any{"result": "ok"}}
-	runtime, principal, capability := seedRuntimeExecution(t, connector)
+	adapter := &runtimeFakeAdapter{executeResult: map[string]any{"result": "ok"}}
+	runtime, principal, capability := seedRuntimeExecution(t, adapter)
 	wantQuota, err := searchChargeMicrosToQuota(capability.PriceMicros)
 	require.NoError(t, err)
 	require.NoError(t, model.DB.Model(&model.User{}).Where("id = ?", principal.UserID).
@@ -536,7 +740,7 @@ func TestExecutionRuntimeChargesSubscriptionOnSuccess(t *testing.T) {
 
 	_, err = runtime.Execute(context.Background(), principal, ExecuteCommand{ServiceID: capability.PublicID, Params: map[string]any{"query": "news"}})
 	require.NoError(t, err)
-	assert.Equal(t, 1, connector.executeCalls)
+	assert.Equal(t, 1, adapter.executeCalls)
 	require.NoError(t, model.DB.First(subscription, subscription.Id).Error)
 	assert.Equal(t, int64(wantQuota), subscription.AmountUsed)
 	walletQuota, err := model.GetUserQuota(principal.UserID, true)
@@ -546,8 +750,8 @@ func TestExecutionRuntimeChargesSubscriptionOnSuccess(t *testing.T) {
 
 func TestExecutionRuntimeRefundsSubscriptionOnUpstreamFailure(t *testing.T) {
 	openRuntimeTestDB(t)
-	connector := &runtimeFakeConnector{executeErr: newConnectorError("UPSTREAM_TIMEOUT", 504, "上游服务响应超时。")}
-	runtime, principal, capability := seedRuntimeExecution(t, connector)
+	adapter := &runtimeFakeAdapter{executeErr: newConnectorError("UPSTREAM_TIMEOUT", 504, "上游服务响应超时。")}
+	runtime, principal, capability := seedRuntimeExecution(t, adapter)
 	wantQuota, err := searchChargeMicrosToQuota(capability.PriceMicros)
 	require.NoError(t, err)
 	require.NoError(t, model.DB.Model(&model.User{}).Where("id = ?", principal.UserID).
@@ -563,7 +767,7 @@ func TestExecutionRuntimeRefundsSubscriptionOnUpstreamFailure(t *testing.T) {
 
 	_, err = runtime.Execute(context.Background(), principal, ExecuteCommand{ServiceID: capability.PublicID, Params: map[string]any{"query": "news"}})
 	require.Error(t, err)
-	assert.Equal(t, 1, connector.executeCalls)
+	assert.Equal(t, 1, adapter.executeCalls)
 	require.NoError(t, model.DB.First(subscription, subscription.Id).Error)
 	assert.Zero(t, subscription.AmountUsed, "failed upstream execution must synchronously refund subscription quota")
 	var record model.SubscriptionPreConsumeRecord
@@ -577,8 +781,8 @@ func TestExecutionRuntimeRefundsSubscriptionOnUpstreamFailure(t *testing.T) {
 
 func TestExecutionRuntimeRejectsInsufficientSubscriptionBeforeUpstream(t *testing.T) {
 	openRuntimeTestDB(t)
-	connector := &runtimeFakeConnector{executeResult: map[string]any{"result": "must not run"}}
-	runtime, principal, capability := seedRuntimeExecution(t, connector)
+	adapter := &runtimeFakeAdapter{executeResult: map[string]any{"result": "must not run"}}
+	runtime, principal, capability := seedRuntimeExecution(t, adapter)
 	wantQuota, err := searchChargeMicrosToQuota(capability.PriceMicros)
 	require.NoError(t, err)
 	require.NoError(t, model.DB.Model(&model.User{}).Where("id = ?", principal.UserID).
@@ -597,15 +801,15 @@ func TestExecutionRuntimeRejectsInsufficientSubscriptionBeforeUpstream(t *testin
 	var publicErr *PublicError
 	require.ErrorAs(t, err, &publicErr)
 	assert.Equal(t, "INSUFFICIENT_QUOTA", publicErr.Code)
-	assert.Zero(t, connector.executeCalls)
+	assert.Zero(t, adapter.executeCalls)
 	require.NoError(t, model.DB.First(subscription, subscription.Id).Error)
 	assert.Zero(t, subscription.AmountUsed)
 }
 
 func TestExecutionRuntimeRefundsWhenSettlementFailsAfterUpstreamSuccess(t *testing.T) {
 	openRuntimeTestDB(t)
-	connector := &runtimeFakeConnector{executeResult: map[string]any{"result": "ok"}}
-	runtime, principal, capability := seedRuntimeExecution(t, connector)
+	adapter := &runtimeFakeAdapter{executeResult: map[string]any{"result": "ok"}}
+	runtime, principal, capability := seedRuntimeExecution(t, adapter)
 	charge := &runtimeFakeCharge{commitErr: errors.New("settlement failed"), chargeMicros: capability.PriceMicros}
 	runtime.chargeFactory = func(context.Context, Principal, string, *model.SearchCapability) (executionCharge, error) {
 		return charge, nil
@@ -613,7 +817,7 @@ func TestExecutionRuntimeRefundsWhenSettlementFailsAfterUpstreamSuccess(t *testi
 
 	_, err := runtime.Execute(context.Background(), principal, ExecuteCommand{ServiceID: capability.PublicID, Params: map[string]any{"query": "news"}})
 	require.Error(t, err)
-	assert.Equal(t, 1, connector.executeCalls)
+	assert.Equal(t, 1, adapter.executeCalls)
 	assert.Equal(t, 1, charge.commitCalls)
 	assert.Equal(t, 1, charge.refundCalls, "settlement failure must synchronously compensate before returning")
 	events, total, listErr := model.ListSearchUsageEvents(model.SearchUsageQuery{UserID: principal.UserID})
@@ -626,8 +830,8 @@ func TestExecutionRuntimeRefundsWhenSettlementFailsAfterUpstreamSuccess(t *testi
 
 func TestExecutionRuntimeRefundsDurablyWhenReservationProgressCannotPersist(t *testing.T) {
 	openRuntimeTestDB(t)
-	connector := &runtimeFakeConnector{executeResult: map[string]any{"result": "must not dispatch"}}
-	runtime, principal, capability := seedRuntimeExecution(t, connector)
+	adapter := &runtimeFakeAdapter{executeResult: map[string]any{"result": "must not dispatch"}}
+	runtime, principal, capability := seedRuntimeExecution(t, adapter)
 	quotaBefore, err := model.GetUserQuota(principal.UserID, true)
 	require.NoError(t, err)
 
@@ -645,7 +849,7 @@ func TestExecutionRuntimeRefundsDurablyWhenReservationProgressCannotPersist(t *t
 		ServiceID: capability.PublicID, Params: map[string]any{"query": "news"},
 	})
 	require.Error(t, err)
-	assert.Zero(t, connector.executeCalls)
+	assert.Zero(t, adapter.executeCalls)
 	quotaAfter, quotaErr := model.GetUserQuota(principal.UserID, true)
 	require.NoError(t, quotaErr)
 	assert.Equal(t, quotaBefore, quotaAfter, "failed durable progress must refund the reservation exactly once")
@@ -665,8 +869,8 @@ func TestExecutionRuntimeRefundsDurablyWhenReservationProgressCannotPersist(t *t
 
 func TestExecutionRuntimeRecoversCommitAfterTerminalWriteFailure(t *testing.T) {
 	openRuntimeTestDB(t)
-	connector := &runtimeFakeConnector{executeResult: map[string]any{"result": "ok"}}
-	runtime, principal, capability := seedRuntimeExecution(t, connector)
+	adapter := &runtimeFakeAdapter{executeResult: map[string]any{"result": "ok"}}
+	runtime, principal, capability := seedRuntimeExecution(t, adapter)
 	wantQuota, err := searchChargeMicrosToQuota(capability.PriceMicros)
 	require.NoError(t, err)
 	quotaBefore, err := model.GetUserQuota(principal.UserID, true)
@@ -724,8 +928,8 @@ func TestExecutionRuntimeRecoversCommitAfterTerminalWriteFailure(t *testing.T) {
 
 func TestExecutionRuntimeRecoversConsumeLogAfterOutboxFinalizeFailure(t *testing.T) {
 	openRuntimeTestDB(t)
-	connector := &runtimeFakeConnector{executeResult: map[string]any{"result": "ok"}}
-	runtime, principal, capability := seedRuntimeExecution(t, connector)
+	adapter := &runtimeFakeAdapter{executeResult: map[string]any{"result": "ok"}}
+	runtime, principal, capability := seedRuntimeExecution(t, adapter)
 
 	var failed atomic.Bool
 	callbackName := "test:fail_vsearch_log_outbox_finalize"
@@ -765,8 +969,8 @@ func TestExecutionRuntimeRecoversConsumeLogAfterOutboxFinalizeFailure(t *testing
 
 func TestExecutionRuntimeRetriesDurableWalletCompensation(t *testing.T) {
 	openRuntimeTestDB(t)
-	connector := &runtimeFakeConnector{executeErr: newConnectorError("UPSTREAM_TIMEOUT", 504, "上游服务响应超时。")}
-	runtime, principal, capability := seedRuntimeExecution(t, connector)
+	adapter := &runtimeFakeAdapter{executeErr: newConnectorError("UPSTREAM_TIMEOUT", 504, "上游服务响应超时。")}
+	runtime, principal, capability := seedRuntimeExecution(t, adapter)
 	wantQuota, err := searchChargeMicrosToQuota(capability.PriceMicros)
 	require.NoError(t, err)
 	quotaBefore, err := model.GetUserQuota(principal.UserID, true)
@@ -817,8 +1021,8 @@ func TestExecutionRuntimeRetriesDurableWalletCompensation(t *testing.T) {
 
 func TestExecutionRuntimeAuditsResidualChargeWhenCompensationFails(t *testing.T) {
 	openRuntimeTestDB(t)
-	connector := &runtimeFakeConnector{executeErr: newConnectorError("UPSTREAM_TIMEOUT", 504, "上游服务响应超时。")}
-	runtime, principal, capability := seedRuntimeExecution(t, connector)
+	adapter := &runtimeFakeAdapter{executeErr: newConnectorError("UPSTREAM_TIMEOUT", 504, "上游服务响应超时。")}
+	runtime, principal, capability := seedRuntimeExecution(t, adapter)
 	charge := &runtimeFakeCharge{refundErr: errors.New("refund failed"), chargeMicros: capability.PriceMicros}
 	runtime.chargeFactory = func(context.Context, Principal, string, *model.SearchCapability) (executionCharge, error) {
 		return charge, nil
@@ -837,523 +1041,184 @@ func TestExecutionRuntimeAuditsResidualChargeWhenCompensationFails(t *testing.T)
 	assert.Equal(t, capability.PriceMicros, events[0].ChargeMicros, "admin audit must expose a possibly unrecovered charge")
 }
 
-func TestControlPlaneSyncEnablesPublicCapabilityWithoutExposingToolName(t *testing.T) {
+func TestControlPlaneSyncCreatesDraftCapabilitiesFromStandardCatalog(t *testing.T) {
 	openRuntimeTestDB(t)
-	connector := &runtimeFakeConnector{
-		findResult:     map[string]any{"content": []any{map[string]any{"type": "text", "text": `{"tools":[{"name":"Firecrawl/search_news","title":"News Search","description":"Find current news"}]}`}}},
-		describeResult: map[string]any{"inputSchema": map[string]any{"type": "object", "properties": map[string]any{"query": map[string]any{"type": "string"}}, "required": []any{"query"}}, "cost": float64(0.2)},
-	}
-	control := NewControlPlane(func(*model.SearchUpstreamAccount, string) (UpstreamConnector, error) { return connector, nil })
-	account, err := control.SaveAccount(context.Background(), AccountCommand{Name: "primary", Secret: "ak_live_sync", Status: "healthy"})
+	snapshot := standardProviderCatalog(ProviderTikHub)
+	adapter := &runtimeFakeAdapter{snapshot: snapshot}
+	control := NewControlPlane(func(*model.SearchUpstreamAccount, string) (ProviderAdapter, error) {
+		return adapter, nil
+	})
+	_, err := control.SaveAccount(context.Background(), AccountCommand{
+		Name: "tikhub-primary", Provider: ProviderTikHub, Secret: "tk_live_sync", Status: "healthy",
+	})
 	require.NoError(t, err)
-	assert.NotContains(t, fmt.Sprintf("%+v", account), "ak_live_sync")
 
-	result, err := control.SyncCatalog(context.Background(), SyncCommand{Queries: []string{"news"}})
+	result, err := control.SyncCatalog(context.Background())
+
 	require.NoError(t, err)
-	assert.Equal(t, 1, result.Synced)
+	assert.Equal(t, len(snapshot.Operations), result.Synced)
+	assert.Zero(t, result.Published)
 	capabilities, err := model.ListSearchCapabilities(true)
 	require.NoError(t, err)
-	require.Len(t, capabilities, 1)
-	assert.Equal(t, model.SearchCapabilityStatusEnabled, capabilities[0].Status)
-	assert.Equal(t, model.SearchCapabilityAvailabilityUpstream, capabilities[0].AvailabilitySource)
-	assert.Regexp(t, `^vr_svc_[a-f0-9]{16}$`, capabilities[0].PublicID)
-	assert.NotEqual(t, "Firecrawl/search_news", capabilities[0].Name)
-	bindings, err := model.ListSearchCapabilityBindings(capabilities[0].Id, true)
-	require.NoError(t, err)
-	require.Len(t, bindings, 1)
-	assert.Equal(t, "Firecrawl/search_news", bindings[0].ToolName)
-}
-
-func TestControlPlaneSyncExplicitlyAdoptsLegacyDisabledCapability(t *testing.T) {
-	openRuntimeTestDB(t)
-	connector := &runtimeFakeConnector{
-		findResult: map[string]any{"tools": []any{map[string]any{
-			"name": "Firecrawl/scrape", "title": "Firecrawl", "description": "Scrape a webpage",
-		}}},
-		describeResult: map[string]any{
-			"inputSchema": map[string]any{"type": "object", "properties": map[string]any{"url": map[string]any{"type": "string"}}},
-			"cost":        float64(0.2),
-		},
+	require.NotEmpty(t, capabilities)
+	for _, capability := range capabilities {
+		assert.Equal(t, model.SearchCapabilityStatusDisabled, capability.Status)
+		assert.Equal(t, model.SearchCapabilitySchemaAvailable, capability.SchemaStatus)
+		assert.Equal(t, "v1", capability.ContractVersion)
+		assert.NotEmpty(t, capability.OperationKey)
+		bindings, bindingErr := model.ListSearchCapabilityBindings(capability.Id, true)
+		require.NoError(t, bindingErr)
+		require.NotEmpty(t, bindings)
+		for _, binding := range bindings {
+			assert.False(t, binding.ContractEquivalent)
+			assert.Equal(t, "tikhub.direct.v1", binding.MappingKey)
+		}
 	}
-	control := NewControlPlane(func(*model.SearchUpstreamAccount, string) (UpstreamConnector, error) { return connector, nil })
-	account, err := control.SaveAccount(context.Background(), AccountCommand{Name: "primary", Secret: "ak_live_legacy", Status: "healthy"})
-	require.NoError(t, err)
-	publicID, err := model.GenerateSearchCapabilityPublicID("Firecrawl/scrape")
-	require.NoError(t, err)
-	legacy := &model.SearchCapability{
-		PublicID: publicID, Name: "Firecrawl", Category: "抓取", Description: "Scrape a webpage",
-		InputSchema: `{"type":"object","properties":{"url":{"type":"string"}}}`,
-		Status:      model.SearchCapabilityStatusDisabled, AvailabilitySource: model.SearchCapabilityAvailabilityLegacyPreserved,
-		UpstreamCostMicros: 200_000, PriceMicros: 200_000,
-	}
-	require.NoError(t, model.CreateSearchCapability(legacy))
-	require.NoError(t, model.UpsertSearchCapabilityBinding(&model.SearchCapabilityBinding{
-		CapabilityID: legacy.Id, UpstreamAccountID: account.ID, ToolName: "Firecrawl/scrape",
-		InputSchema: legacy.InputSchema, Status: model.SearchCapabilityBindingStatusEnabled,
-		UpstreamCostMicros: 200_000,
-	}))
-
-	result, err := control.SyncCatalog(context.Background(), SyncCommand{Queries: []string{"scrape"}})
-
-	require.NoError(t, err)
-	assert.Equal(t, 1, result.Published)
-	stored, err := model.GetSearchCapabilityByID(legacy.Id)
-	require.NoError(t, err)
-	assert.Equal(t, model.SearchCapabilityStatusEnabled, stored.Status)
-	assert.Equal(t, model.SearchCapabilityAvailabilityLegacyAdopted, stored.AvailabilitySource)
-}
-
-func TestControlPlaneSyncExcludesJustOneAPIFromCatalogAndExecution(t *testing.T) {
-	openRuntimeTestDB(t)
-	connector := &runtimeFakeConnector{
-		findResult: map[string]any{"tools": []any{
-			map[string]any{"name": "Firecrawl/scrape", "title": "Firecrawl", "description": "Scrape a webpage"},
-			map[string]any{"name": "JustOneAPI/getApiYoutubeSearchV1", "title": "YouTube", "description": "Search YouTube"},
-		}},
-		describeResult: map[string]any{
-			"inputSchema": map[string]any{"type": "object", "properties": map[string]any{"query": map[string]any{"type": "string"}}},
-			"cost":        float64(0.2),
-		},
-	}
-	control := NewControlPlane(func(*model.SearchUpstreamAccount, string) (UpstreamConnector, error) { return connector, nil })
-	account, err := control.SaveAccount(context.Background(), AccountCommand{Name: "primary", Secret: "ak_live_direct_only", Status: "healthy"})
-	require.NoError(t, err)
-
-	justOneID, err := model.GenerateSearchCapabilityPublicID("JustOneAPI/getApiYoutubeSearchV1")
-	require.NoError(t, err)
-	justOneCapability := &model.SearchCapability{
-		PublicID: justOneID, Name: "YouTube", Category: "社交媒体", Description: "Search YouTube",
-		InputSchema: `{"type":"object","properties":{"query":{"type":"string"}}}`,
-		Status:      model.SearchCapabilityStatusEnabled, UpstreamCostMicros: 200_000, PriceMicros: 200_000,
-	}
-	require.NoError(t, model.CreateSearchCapability(justOneCapability))
-	require.NoError(t, model.UpsertSearchCapabilityBinding(&model.SearchCapabilityBinding{
-		CapabilityID: justOneCapability.Id, UpstreamAccountID: account.ID,
-		ToolName: "JustOneAPI/getApiYoutubeSearchV1", InputSchema: justOneCapability.InputSchema,
-		Status: model.SearchCapabilityBindingStatusEnabled, UpstreamCostMicros: 200_000,
-	}))
-
-	result, err := control.SyncCatalog(context.Background(), SyncCommand{Queries: []string{"scrape"}})
-	require.NoError(t, err)
-	assert.Equal(t, 1, result.Discovered)
-	assert.Equal(t, 1, result.Synced)
-
 	catalog, err := control.runtime.ListCatalog(context.Background(), Principal{}, true)
 	require.NoError(t, err)
-	require.Len(t, catalog, 1)
-	assert.Equal(t, "Firecrawl", catalog[0].Name)
-	assert.True(t, catalog[0].Enabled)
-
-	healthyBindings, err := listHealthySearchBindingsForCapability(justOneCapability)
-	require.NoError(t, err)
-	assert.Empty(t, healthyBindings)
+	require.NotEmpty(t, catalog)
+	for _, item := range catalog {
+		assert.Equal(t, "unverified", item.ContractStatus)
+		assert.Zero(t, item.HealthyRouteCount)
+		assert.False(t, item.Enabled)
+	}
 }
 
-func TestControlPlaneSyncPreservesManualDisableAndEnterpriseGrants(t *testing.T) {
+func TestControlPlaneSyncDisablesBindingsRemovedFromCuratedCatalog(t *testing.T) {
 	openRuntimeTestDB(t)
-	connector := &runtimeFakeConnector{
-		findResult: map[string]any{"tools": []any{map[string]any{
-			"name": "Firecrawl/scrape", "title": "Firecrawl", "description": "Scrape a webpage",
-		}}},
-		describeResult: map[string]any{
-			"inputSchema": map[string]any{"type": "object", "properties": map[string]any{"url": map[string]any{"type": "string"}}},
-			"cost":        float64(0.2),
-		},
-	}
-	control := NewControlPlane(func(*model.SearchUpstreamAccount, string) (UpstreamConnector, error) { return connector, nil })
-	_, err := control.SaveAccount(context.Background(), AccountCommand{Name: "primary", Secret: "ak_live_grants", Status: "healthy"})
-	require.NoError(t, err)
-
-	_, err = control.SyncCatalog(context.Background(), SyncCommand{Queries: []string{"scrape"}})
-	require.NoError(t, err)
-	capabilities, err := model.ListSearchCapabilities(true)
-	require.NoError(t, err)
-	require.Len(t, capabilities, 1)
-	capability := capabilities[0]
-	require.NoError(t, model.ReplaceSearchCapabilityGrants(capability.Id, []model.SearchCapabilityGrant{{EnterpriseID: 42}}))
-	_, err = control.ConfigureCapability(context.Background(), CapabilityCommand{
-		ID: capability.Id, Enabled: false, PriceMicros: capability.PriceMicros,
-		AvailabilityOverride: true,
+	snapshot := standardProviderCatalog(ProviderTikHub)
+	require.GreaterOrEqual(t, len(snapshot.Operations), 2)
+	adapter := &runtimeFakeAdapter{snapshot: snapshot}
+	control := NewControlPlane(func(*model.SearchUpstreamAccount, string) (ProviderAdapter, error) {
+		return adapter, nil
+	})
+	_, err := control.SaveAccount(context.Background(), AccountCommand{
+		Name: "tikhub-primary", Provider: ProviderTikHub, Secret: "tk_live_sync", Status: "healthy",
 	})
 	require.NoError(t, err)
+	_, err = control.SyncCatalog(context.Background())
+	require.NoError(t, err)
 
-	_, err = control.SyncCatalog(context.Background(), SyncCommand{Queries: []string{"scrape"}})
+	removed := snapshot.Operations[0]
+	adapter.snapshot.Operations = snapshot.Operations[1:]
+	_, err = control.SyncCatalog(context.Background())
 	require.NoError(t, err)
-	capability, err = model.GetSearchCapabilityByID(capability.Id)
-	require.NoError(t, err)
-	assert.Equal(t, model.SearchCapabilityStatusDisabled, capability.Status)
-	grants, err := model.ListSearchCapabilityGrants(capability.Id)
-	require.NoError(t, err)
-	require.Len(t, grants, 1)
-	assert.Equal(t, 42, grants[0].EnterpriseID)
+
+	var binding model.SearchCapabilityBinding
+	require.NoError(t, model.DB.Where("provider_operation_id = ?", removed.OperationID).First(&binding).Error)
+	assert.Equal(t, model.SearchCapabilityBindingStatusDisabled, binding.Status)
+	var retained model.SearchCapabilityBinding
+	require.NoError(t, model.DB.Where("provider_operation_id = ?", snapshot.Operations[1].OperationID).First(&retained).Error)
+	assert.Equal(t, model.SearchCapabilityBindingStatusEnabled, retained.Status)
 }
 
-func TestControlPlaneSyncAcceptsAgentKeyDescribeToolContract(t *testing.T) {
+func TestControlPlaneSyncDisablesOperationMovedToAnotherCapability(t *testing.T) {
 	openRuntimeTestDB(t)
-	connector := &runtimeFakeConnector{
-		findResult: map[string]any{"content": []any{map[string]any{
-			"type": "text",
-			"text": `[{"name":"Firecrawl/scrape","summary":"Scrape a webpage","cost":{"credits_per_call":0.2}}]`,
-		}}},
-		describeResult: map[string]any{"content": []any{map[string]any{
-			"type": "text",
-			"text": `{
-				"name":"Firecrawl/scrape",
-				"description":"Fresh upstream description",
-				"cost":{"credits_per_call":0.2,"usd_per_call":0.004},
-				"execute_as":{"name":"Firecrawl/scrape","params":{"url":"<The URL to scrape.>"}},
-				"params":{"type":"object","required":["url"],"properties":{"url":{"type":"string","format":"uri"}}}
-			}`,
-		}}},
-	}
-	control := NewControlPlane(func(*model.SearchUpstreamAccount, string) (UpstreamConnector, error) {
-		return connector, nil
+	adapter := &runtimeFakeAdapter{snapshot: standardProviderCatalog(ProviderJustOneAPI)}
+	control := NewControlPlane(func(*model.SearchUpstreamAccount, string) (ProviderAdapter, error) {
+		return adapter, nil
 	})
-	_, err := control.SaveAccount(context.Background(), AccountCommand{Name: "primary", Secret: "ak_live_official_contract", Status: "healthy"})
-	require.NoError(t, err)
-
-	result, err := control.SyncCatalog(context.Background(), SyncCommand{Queries: []string{"scrape a webpage"}})
-	require.NoError(t, err)
-	assert.Empty(t, result.Failures)
-	assert.Equal(t, 1, result.Synced)
-
-	capabilities, err := model.ListSearchCapabilities(true)
-	require.NoError(t, err)
-	require.Len(t, capabilities, 1)
-	capability := capabilities[0]
-	assert.Equal(t, "Fresh upstream description", capability.Description)
-	assert.Equal(t, model.SearchCapabilitySchemaAvailable, capability.SchemaStatus)
-	assert.JSONEq(t, `{
-		"type":"object",
-		"required":["url"],
-		"properties":{"url":{"type":"string","format":"uri"}}
-	}`, capability.InputSchema)
-	assert.Equal(t, int64(200_000), capability.UpstreamCostMicros)
-	assert.Equal(t, int64(200_000), capability.PriceMicros)
-
-	bindings, err := model.ListSearchCapabilityBindings(capability.Id, true)
-	require.NoError(t, err)
-	require.Len(t, bindings, 1)
-	assert.Equal(t, capability.InputSchema, bindings[0].InputSchema)
-	assert.Equal(t, int64(200_000), bindings[0].UpstreamCostMicros)
-}
-
-func TestControlPlaneSyncIgnoresNamedSchemaProperties(t *testing.T) {
-	openRuntimeTestDB(t)
-	connector := &runtimeFakeConnector{
-		findResult: map[string]any{"content": []any{map[string]any{
-			"type": "text",
-			"text": `{"tools":[{"name":"private/search_news","title":"News Search","description":"Find current news","inputSchema":{"type":"object","properties":{"query":{"name":"query","type":"string","description":"A schema field, not a tool"}}}}]}`,
-		}}},
-		describeResult: map[string]any{"content": []any{map[string]any{
-			"type": "text",
-			"text": `{"name":"private/search_news","description":"Find current news","parameters":[{"name":"q","type":"string","required":true,"description":"Search query, not the public description","enum":["news","web"],"default":"news"},{"name":"page","type":"integer","required":false,"description":"Page number","min":1,"max":10,"default":1},{"name":"score","type":"number","minimum":0,"maximum":1},{"name":"enabled","type":"boolean"},{"name":"filters","type":"object"},{"name":"tags","type":"array","itemType":"string"},{"type":"string","description":"Missing names must be skipped"}],"cost":0.2}`,
-		}}},
-	}
-	control := NewControlPlane(func(*model.SearchUpstreamAccount, string) (UpstreamConnector, error) { return connector, nil })
-	_, err := control.SaveAccount(context.Background(), AccountCommand{Name: "primary", Secret: "ak_live_sync", Status: "healthy"})
-	require.NoError(t, err)
-
-	result, err := control.SyncCatalog(context.Background(), SyncCommand{Queries: []string{"news"}})
-	require.NoError(t, err)
-	assert.Equal(t, 1, result.Discovered)
-	assert.Equal(t, 1, result.Synced)
-	expectedServiceID, err := model.GenerateSearchCapabilityPublicID("private/search_news")
-	require.NoError(t, err)
-	assert.Equal(t, []string{expectedServiceID}, result.SyncedServiceIDs)
-
-	capabilities, err := model.ListSearchCapabilities(true)
-	require.NoError(t, err)
-	require.Len(t, capabilities, 1)
-	assert.Equal(t, "Find current news", capabilities[0].Description)
-	assert.Equal(t, model.SearchCapabilitySchemaAvailable, capabilities[0].SchemaStatus)
-	assert.JSONEq(t, `{
-		"type":"object",
-		"additionalProperties":false,
-		"properties":{
-			"q":{"type":"string","description":"Search query, not the public description","enum":["news","web"],"default":"news"},
-			"page":{"type":"integer","description":"Page number","minimum":1,"maximum":10,"default":1},
-			"score":{"type":"number","minimum":0,"maximum":1},
-			"enabled":{"type":"boolean"},
-			"filters":{"type":"object"},
-			"tags":{"type":"array","items":{"type":"string"}}
-		},
-		"required":["q"]
-	}`, capabilities[0].InputSchema)
-}
-
-func TestExtractInputSchemaRejectsUnknownParameterTypes(t *testing.T) {
-	assert.Nil(t, extractInputSchema(map[string]any{
-		"parameters": []any{map[string]any{"name": "opaque", "type": "provider-specific"}},
-	}))
-}
-
-func TestControlPlaneSyncClearsFindSchemaWhenDescribeParametersAreInvalid(t *testing.T) {
-	openRuntimeTestDB(t)
-	connector := &runtimeFakeConnector{
-		findResult: map[string]any{"tools": []any{map[string]any{
-			"name": "private/unknown", "title": "Unknown Search",
-			"inputSchema": map[string]any{"type": "object", "properties": map[string]any{"query": map[string]any{"type": "string"}}},
-		}}},
-		describeResult: map[string]any{
-			"description": "Unknown parameter type",
-			"parameters":  []any{map[string]any{"name": "query", "type": "provider-specific"}},
-		},
-	}
-	control := NewControlPlane(func(*model.SearchUpstreamAccount, string) (UpstreamConnector, error) {
-		return connector, nil
-	})
-	_, err := control.SaveAccount(context.Background(), AccountCommand{Name: "primary", Secret: "ak_live_unknown", Status: "healthy"})
-	require.NoError(t, err)
-
-	result, err := control.SyncCatalog(context.Background(), SyncCommand{Queries: []string{"unknown"}})
-
-	require.NoError(t, err)
-	assert.Equal(t, 1, result.Synced)
-	capabilities, err := model.ListSearchCapabilities(true)
-	require.NoError(t, err)
-	require.Len(t, capabilities, 1)
-	assert.Empty(t, capabilities[0].InputSchema)
-	assert.Equal(t, model.SearchCapabilitySchemaUnavailable, capabilities[0].SchemaStatus)
-}
-
-func TestControlPlaneSyncClearsFindSchemaWhenDescribeParametersAreNull(t *testing.T) {
-	openRuntimeTestDB(t)
-	connector := &runtimeFakeConnector{
-		findResult: map[string]any{"tools": []any{map[string]any{
-			"name": "private/null-parameters", "title": "Null Parameters Search",
-			"inputSchema": map[string]any{"type": "object", "properties": map[string]any{"query": map[string]any{"type": "string"}}},
-		}}},
-		describeResult: map[string]any{
-			"description": "Parameters are explicitly null",
-			"parameters":  nil,
-		},
-	}
-	control := NewControlPlane(func(*model.SearchUpstreamAccount, string) (UpstreamConnector, error) {
-		return connector, nil
-	})
-	_, err := control.SaveAccount(context.Background(), AccountCommand{Name: "primary", Secret: "ak_live_null_parameters", Status: "healthy"})
-	require.NoError(t, err)
-
-	result, err := control.SyncCatalog(context.Background(), SyncCommand{Queries: []string{"null parameters"}})
-
-	require.NoError(t, err)
-	assert.Equal(t, 1, result.Synced)
-	capabilities, err := model.ListSearchCapabilities(true)
-	require.NoError(t, err)
-	require.Len(t, capabilities, 1)
-	assert.Empty(t, capabilities[0].InputSchema)
-	assert.Equal(t, model.SearchCapabilitySchemaUnavailable, capabilities[0].SchemaStatus)
-}
-
-func TestControlPlaneSyncClearsFindSchemaWhenDescribeInputSchemaIsNull(t *testing.T) {
-	openRuntimeTestDB(t)
-	connector := &runtimeFakeConnector{
-		findResult: map[string]any{"tools": []any{map[string]any{
-			"name": "private/null-input-schema", "title": "Null Input Schema Search",
-			"inputSchema": map[string]any{"type": "object", "properties": map[string]any{"query": map[string]any{"type": "string"}}},
-		}}},
-		describeResult: map[string]any{
-			"description": "Input schema is explicitly null",
-			"inputSchema": nil,
-		},
-	}
-	control := NewControlPlane(func(*model.SearchUpstreamAccount, string) (UpstreamConnector, error) {
-		return connector, nil
-	})
-	_, err := control.SaveAccount(context.Background(), AccountCommand{Name: "primary", Secret: "ak_live_null_schema", Status: "healthy"})
-	require.NoError(t, err)
-
-	result, err := control.SyncCatalog(context.Background(), SyncCommand{Queries: []string{"null input schema"}})
-
-	require.NoError(t, err)
-	assert.Equal(t, 1, result.Synced)
-	capabilities, err := model.ListSearchCapabilities(true)
-	require.NoError(t, err)
-	require.Len(t, capabilities, 1)
-	assert.Empty(t, capabilities[0].InputSchema)
-	assert.Equal(t, model.SearchCapabilitySchemaUnavailable, capabilities[0].SchemaStatus)
-}
-
-func TestControlPlaneSyncAcceptsDescribeEmptyParametersSchema(t *testing.T) {
-	openRuntimeTestDB(t)
-	connector := &runtimeFakeConnector{
-		findResult: map[string]any{"tools": []any{map[string]any{
-			"name": "private/no-parameters", "title": "No Parameters Search",
-			"inputSchema": map[string]any{"type": "object", "properties": map[string]any{"legacy": map[string]any{"type": "string"}}},
-		}}},
-		describeResult: map[string]any{
-			"description": "This tool takes no parameters",
-			"parameters":  []any{},
-		},
-	}
-	control := NewControlPlane(func(*model.SearchUpstreamAccount, string) (UpstreamConnector, error) {
-		return connector, nil
-	})
-	_, err := control.SaveAccount(context.Background(), AccountCommand{Name: "primary", Secret: "ak_live_empty_parameters", Status: "healthy"})
-	require.NoError(t, err)
-
-	result, err := control.SyncCatalog(context.Background(), SyncCommand{Queries: []string{"no parameters"}})
-
-	require.NoError(t, err)
-	assert.Equal(t, 1, result.Synced)
-	capabilities, err := model.ListSearchCapabilities(true)
-	require.NoError(t, err)
-	require.Len(t, capabilities, 1)
-	assert.JSONEq(t, `{"type":"object","properties":{},"additionalProperties":false}`, capabilities[0].InputSchema)
-	assert.Equal(t, model.SearchCapabilitySchemaAvailable, capabilities[0].SchemaStatus)
-}
-
-func TestControlPlaneSyncRaisesPublishedPriceWhenUpstreamCostIncreases(t *testing.T) {
-	openRuntimeTestDB(t)
-	connector := &runtimeFakeConnector{
-		findResult: map[string]any{"tools": []any{map[string]any{
-			"name": "private/search", "title": "Public Search", "description": "Search public data",
-		}}},
-		describeResult: map[string]any{
-			"description": "Search public data",
-			"parameters":  []any{map[string]any{"name": "query", "type": "string", "required": true}},
-			"cost":        float64(0.3),
-		},
-	}
-	_, _, capability := seedRuntimeExecution(t, connector)
-	require.NoError(t, model.DB.Model(&model.SearchCapability{}).Where("id = ?", capability.Id).
-		Update("price_micros", int64(100_000)).Error)
-	control := NewControlPlane(func(*model.SearchUpstreamAccount, string) (UpstreamConnector, error) {
-		return connector, nil
-	})
-
-	_, err := control.SyncCatalog(context.Background(), SyncCommand{Queries: []string{"search"}})
-
-	require.NoError(t, err)
-	stored, err := model.GetSearchCapabilityByID(capability.Id)
-	require.NoError(t, err)
-	assert.Equal(t, int64(300_000), stored.PriceMicros)
-}
-
-func TestControlPlaneSyncReturnsSortedUniqueServiceIDs(t *testing.T) {
-	openRuntimeTestDB(t)
-	connector := &runtimeFakeConnector{
-		findResult: map[string]any{"tools": []any{
-			map[string]any{"name": "private/z", "title": "Z Search"},
-			map[string]any{"name": "private/a", "title": "A Search"},
-		}},
-		describeResult: map[string]any{"inputSchema": map[string]any{"type": "object"}},
-	}
-	control := NewControlPlane(func(*model.SearchUpstreamAccount, string) (UpstreamConnector, error) { return connector, nil })
-	_, err := control.SaveAccount(context.Background(), AccountCommand{Name: "primary", Secret: "ak_live_primary", Status: "healthy"})
-	require.NoError(t, err)
-	_, err = control.SaveAccount(context.Background(), AccountCommand{Name: "secondary", Secret: "ak_live_secondary", Status: "healthy"})
-	require.NoError(t, err)
-
-	result, err := control.SyncCatalog(context.Background(), SyncCommand{Queries: []string{"news"}})
-	require.NoError(t, err)
-	assert.Equal(t, 4, result.Synced)
-	assert.Equal(t, []string{"vr_svc_4042d49f4a6d5be6", "vr_svc_e8987ac561a04a91"}, result.SyncedServiceIDs)
-}
-
-func TestControlPlaneSyncDoesNotPersistUpstreamSecretsFromResponses(t *testing.T) {
-	openRuntimeTestDB(t)
-	const upstreamSecret = "ak_live_sync_sensitive_value"
-	connector := &runtimeFakeConnector{
-		findResult: map[string]any{"tools": []any{map[string]any{
-			"name": "private/search_secret", "title": "Search " + upstreamSecret,
-			"description": "uses " + upstreamSecret,
-		}}},
-		describeResult: map[string]any{
-			"description": "credential " + upstreamSecret,
-			"inputSchema": map[string]any{
-				"type": "object", "properties": map[string]any{
-					"query": map[string]any{"type": "string", "default": upstreamSecret},
-				},
-			},
-		},
-		accountResult: map[string]any{"plan": "plan-" + upstreamSecret, "balance": float64(3)},
-	}
-	control := NewControlPlane(func(*model.SearchUpstreamAccount, string) (UpstreamConnector, error) { return connector, nil })
 	account, err := control.SaveAccount(context.Background(), AccountCommand{
-		Name: "primary", BaseURL: "https://upstream.example/v1/mcp", Secret: upstreamSecret, Status: "healthy",
+		Name: "justone-primary", Provider: ProviderJustOneAPI, Secret: "jo_live_sync", Status: "healthy",
 	})
 	require.NoError(t, err)
+	oldPublicID, err := model.GenerateSearchCapabilityPublicID("social.trend.list@v1")
+	require.NoError(t, err)
+	oldCapability := &model.SearchCapability{
+		PublicID: oldPublicID, OperationKey: "social.trend.list", ContractVersion: "v1",
+		Name: "平台趋势榜", Category: "社交媒体", InputSchema: `{"type":"object"}`,
+		OutputSchema: `{"type":"object"}`, Status: model.SearchCapabilityStatusDisabled,
+	}
+	require.NoError(t, model.CreateSearchCapability(oldCapability))
+	require.NoError(t, model.UpsertSearchCapabilityBinding(&model.SearchCapabilityBinding{
+		CapabilityID: oldCapability.Id, UpstreamAccountID: account.ID,
+		ToolName: "getApiDouyinHotSearchV1", ProviderOperationID: "getApiDouyinHotSearchV1",
+		Platform: "douyin", MappingKey: justOneAPIDirectMappingKey,
+		Status: model.SearchCapabilityBindingStatusEnabled,
+	}))
 
-	account, err = control.ProbeAccount(context.Background(), account.ID)
+	_, err = control.SyncCatalog(context.Background())
 	require.NoError(t, err)
-	assert.NotContains(t, account.Plan, upstreamSecret)
 
-	_, err = control.SyncCatalog(context.Background(), SyncCommand{Queries: []string{"secret"}})
+	var oldBinding model.SearchCapabilityBinding
+	require.NoError(t, model.DB.Where("capability_id = ? AND provider_operation_id = ?", oldCapability.Id, "getApiDouyinHotSearchV1").First(&oldBinding).Error)
+	assert.Equal(t, model.SearchCapabilityBindingStatusDisabled, oldBinding.Status)
+	contentID, err := model.GenerateSearchCapabilityPublicID("social.content.search@v1")
 	require.NoError(t, err)
-	var capability model.SearchCapability
-	require.NoError(t, model.DB.First(&capability).Error)
-	capabilityData, err := common.Marshal(capability)
+	contentCapability, err := model.GetSearchCapabilityByPublicID(contentID)
 	require.NoError(t, err)
-	assert.NotContains(t, string(capabilityData), upstreamSecret)
-	assert.NotContains(t, capability.InputSchema, upstreamSecret)
-
-	catalog, err := control.runtime.ListCatalog(context.Background(), Principal{}, true)
-	require.NoError(t, err)
-	catalogData, err := common.Marshal(catalog)
-	require.NoError(t, err)
-	assert.NotContains(t, string(catalogData), upstreamSecret)
+	var currentBinding model.SearchCapabilityBinding
+	require.NoError(t, model.DB.Where("capability_id = ? AND provider_operation_id = ?", contentCapability.Id, "getApiDouyinHotSearchV1").First(&currentBinding).Error)
+	assert.Equal(t, model.SearchCapabilityBindingStatusEnabled, currentBinding.Status)
 }
 
-func TestControlPlanePartialSyncKeepsPreviouslyHealthyBindings(t *testing.T) {
+func TestControlPlaneRejectsPublishingUnverifiedStandardContract(t *testing.T) {
 	openRuntimeTestDB(t)
-	connector := &runtimeFakeConnector{
-		findResult:     map[string]any{"tools": []any{map[string]any{"name": "private/new_search", "title": "New Search"}}},
-		findErrByQuery: map[string]error{"broken": errors.New("temporary discovery failure")},
-	}
-	_, _, existingCapability := seedRuntimeExecution(t, connector)
-	control := NewControlPlane(func(*model.SearchUpstreamAccount, string) (UpstreamConnector, error) { return connector, nil })
+	adapter := &runtimeFakeAdapter{snapshot: standardProviderCatalog(ProviderTikHub)}
+	control := NewControlPlane(func(*model.SearchUpstreamAccount, string) (ProviderAdapter, error) {
+		return adapter, nil
+	})
+	_, err := control.SaveAccount(context.Background(), AccountCommand{
+		Name: "tikhub-primary", Provider: ProviderTikHub, Secret: "tk_live_unverified", Status: "healthy",
+	})
+	require.NoError(t, err)
+	_, err = control.SyncCatalog(context.Background())
+	require.NoError(t, err)
+	capabilities, err := model.ListSearchCapabilities(true)
+	require.NoError(t, err)
+	require.NotEmpty(t, capabilities)
+	capability := capabilities[0]
 
-	result, err := control.SyncCatalog(context.Background(), SyncCommand{Queries: []string{"news", "broken"}})
+	published, err := control.PublishCatalog(context.Background(), PublishCommand{
+		ServiceIDs: []string{capability.PublicID}, AccessMode: PublishAccessAllEnterprises,
+	})
+
 	require.NoError(t, err)
-	assert.Positive(t, result.Synced)
-	assert.NotEmpty(t, result.Failures)
-	bindings, err := model.ListSearchCapabilityBindings(existingCapability.Id, true)
-	require.NoError(t, err)
-	require.Len(t, bindings, 1)
-	assert.Equal(t, model.SearchCapabilityBindingStatusEnabled, bindings[0].Status)
+	assert.Zero(t, published.Published)
+	require.Len(t, published.SkippedServices, 1)
+	assert.Equal(t, PublishSkipHealthyRouteUnavailable, published.SkippedServices[0].Reason)
+	_, err = control.ConfigureCapability(context.Background(), CapabilityCommand{
+		ID: capability.Id, Enabled: true, PriceMicros: capability.PriceMicros,
+	})
+	var publicErr *PublicError
+	require.ErrorAs(t, err, &publicErr)
+	assert.Equal(t, "CAPABILITY_CONTRACT_UNVERIFIED", publicErr.Code)
 }
 
-func TestControlPlaneTargetedSyncNeverDisablesUnreturnedBindings(t *testing.T) {
+func TestExecutionRuntimeRejectsUnverifiedStandardContractBeforeDispatch(t *testing.T) {
 	openRuntimeTestDB(t)
-	connector := &runtimeFakeConnector{
-		findResult: map[string]any{"tools": []any{map[string]any{"name": "private/new_search", "title": "New Search"}}},
-	}
-	_, _, existingCapability := seedRuntimeExecution(t, connector)
-	control := NewControlPlane(func(*model.SearchUpstreamAccount, string) (UpstreamConnector, error) { return connector, nil })
+	adapter := &runtimeFakeAdapter{snapshot: standardProviderCatalog(ProviderTikHub)}
+	control := NewControlPlane(func(*model.SearchUpstreamAccount, string) (ProviderAdapter, error) {
+		return adapter, nil
+	})
+	_, err := control.SaveAccount(context.Background(), AccountCommand{
+		Name: "tikhub-primary", Provider: ProviderTikHub, Secret: "tk_live_execute", Status: "healthy",
+	})
+	require.NoError(t, err)
+	_, err = control.SyncCatalog(context.Background())
+	require.NoError(t, err)
+	serviceID, err := model.GenerateSearchCapabilityPublicID("social.trend.list@v1")
+	require.NoError(t, err)
+	capability, err := model.GetSearchCapabilityByPublicID(serviceID)
+	require.NoError(t, err)
+	require.NoError(t, model.DB.Model(&model.SearchCapability{}).Where("id = ?", capability.Id).
+		Update("status", model.SearchCapabilityStatusEnabled).Error)
 
-	result, err := control.SyncCatalog(context.Background(), SyncCommand{Queries: []string{"news"}, Prefix: "private/new"})
-	require.NoError(t, err)
-	assert.Positive(t, result.Synced)
-	bindings, err := model.ListSearchCapabilityBindings(existingCapability.Id, true)
-	require.NoError(t, err)
-	require.Len(t, bindings, 1)
-	assert.Equal(t, model.SearchCapabilityBindingStatusEnabled, bindings[0].Status)
-}
+	_, err = control.runtime.Execute(context.Background(), Principal{UserID: 7, EnterpriseID: 11, AgentKeyID: 21}, ExecuteCommand{
+		ServiceID: serviceID, Params: map[string]any{"platform": "douyin"},
+	})
 
-func TestControlPlaneDiscoverySyncNeverTreatsSearchResultsAsAuthoritativeDeletion(t *testing.T) {
-	openRuntimeTestDB(t)
-	connector := &runtimeFakeConnector{
-		findResult: map[string]any{"tools": []any{map[string]any{"name": "private/new_search", "title": "New Search"}}},
-	}
-	_, _, existingCapability := seedRuntimeExecution(t, connector)
-	control := NewControlPlane(func(*model.SearchUpstreamAccount, string) (UpstreamConnector, error) { return connector, nil })
-
-	result, err := control.SyncCatalog(context.Background(), SyncCommand{})
-	require.NoError(t, err)
-	assert.Positive(t, result.Synced)
-	bindings, err := model.ListSearchCapabilityBindings(existingCapability.Id, true)
-	require.NoError(t, err)
-	require.Len(t, bindings, 1)
-	assert.Equal(t, model.SearchCapabilityBindingStatusEnabled, bindings[0].Status)
+	var publicErr *PublicError
+	require.ErrorAs(t, err, &publicErr)
+	assert.Equal(t, "CAPABILITY_UNAVAILABLE", publicErr.Code)
+	assert.Zero(t, adapter.executeCalls)
 }
 
 func TestControlPlaneUpdateAccountEditsRoutingAndKeepsBlankSecret(t *testing.T) {
 	openRuntimeTestDB(t)
 	control := NewControlPlane(nil)
 	created, err := control.SaveAccount(context.Background(), AccountCommand{
-		Name: "primary", BaseURL: "https://old.example.com/v1/mcp", Secret: "ak_live_original",
+		Name: "primary", BaseURL: "https://api.tikhub.io/old", Secret: "ak_live_original",
 		Weight: 2, Priority: 1, Status: "healthy",
 	})
 	require.NoError(t, err)
@@ -1363,7 +1228,7 @@ func TestControlPlaneUpdateAccountEditsRoutingAndKeepsBlankSecret(t *testing.T) 
 	secondaryPool := &model.SearchUpstreamPool{Name: "secondary"}
 	require.NoError(t, model.CreateSearchUpstreamPool(secondaryPool))
 	updated, err := control.SaveAccount(context.Background(), AccountCommand{
-		ID: created.ID, Name: "renamed", BaseURL: "https://new.example.com/v1/mcp",
+		ID: created.ID, Name: "renamed", BaseURL: "https://api.tikhub.io/new",
 		PoolID: secondaryPool.Id, Weight: 7, Priority: 3, Status: "paused",
 	})
 	require.NoError(t, err)
@@ -1371,7 +1236,7 @@ func TestControlPlaneUpdateAccountEditsRoutingAndKeepsBlankSecret(t *testing.T) 
 	require.NoError(t, err)
 
 	assert.Equal(t, "renamed", updated.Name)
-	assert.Equal(t, "https://new.example.com/v1/mcp", updated.BaseURL)
+	assert.Equal(t, "https://api.tikhub.io/new", updated.BaseURL)
 	assert.Equal(t, secondaryPool.Id, updated.PoolID)
 	assert.Equal(t, 7, updated.Weight)
 	assert.Equal(t, 3, updated.Priority)
@@ -1390,16 +1255,66 @@ func TestControlPlaneUpdateAccountEditsRoutingAndKeepsBlankSecret(t *testing.T) 
 	assert.NotContains(t, fmt.Sprintf("%+v", rotated), "ak_live_replacement")
 }
 
-func TestPublicToolNameRejectsPrivateIdentifierDisguisedAsTitle(t *testing.T) {
-	name := publicToolName(discoveredTool{Name: "private/search_news", Title: "private_search_news"})
-	assert.NotEqual(t, "private_search_news", name)
-	assert.NotContains(t, strings.ToLower(name), "search news")
+func TestControlPlaneRequiresNewSecretWhenSwitchingProvider(t *testing.T) {
+	openRuntimeTestDB(t)
+	control := NewControlPlane(nil)
+	created, err := control.SaveAccount(context.Background(), AccountCommand{
+		Name: "primary", Provider: ProviderTikHub, Secret: "tk_live_original",
+	})
+	require.NoError(t, err)
+	capability := createPublishCapability(t, "private/provider-switch", `{"type":"object"}`, 100_000, 100_000)
+	require.NoError(t, model.UpsertSearchCapabilityBinding(&model.SearchCapabilityBinding{
+		CapabilityID: capability.Id, UpstreamAccountID: created.ID, ToolName: "private/provider-switch",
+		MappingKey: "tikhub.direct.v1", InputSchema: capability.InputSchema,
+		Status: model.SearchCapabilityBindingStatusEnabled, UpstreamCostMicros: 100_000,
+	}))
+	require.NoError(t, model.DB.Model(&model.SearchUpstreamAccount{}).Where("id = ?", created.ID).Updates(map[string]any{
+		"plan": "old-plan", "balance_micros": 9_000_000, "balance_currency": "USD",
+		"failure_count": 3, "concurrent_requests": 2, "last_checked_at": int64(1234),
+		"last_error_code": "OLD_ERROR", "last_error_message": "old provider state",
+	}).Error)
+
+	_, err = control.SaveAccount(context.Background(), AccountCommand{
+		ID: created.ID, Name: "primary", Provider: ProviderJustOneAPI,
+		Weight: 1, Status: "standby",
+	})
+
+	var publicErr *PublicError
+	require.ErrorAs(t, err, &publicErr)
+	assert.Equal(t, "UPSTREAM_SECRET_REQUIRED", publicErr.Code)
+	stored, getErr := model.GetSearchUpstreamAccountByID(created.ID)
+	require.NoError(t, getErr)
+	assert.Equal(t, ProviderTikHub, stored.Provider)
+	bindings, listErr := model.ListSearchCapabilityBindings(capability.Id, true)
+	require.NoError(t, listErr)
+	require.Len(t, bindings, 1, "rejected provider switch must preserve current routes")
+
+	updated, err := control.SaveAccount(context.Background(), AccountCommand{
+		ID: created.ID, Name: "primary", Provider: ProviderJustOneAPI,
+		Secret: "jo_live_replacement", Weight: 1, Status: "standby",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, ProviderJustOneAPI, updated.Provider)
+	assert.Equal(t, DefaultJustOneAPIBaseURL, updated.BaseURL)
+	stored, getErr = model.GetSearchUpstreamAccountByID(created.ID)
+	require.NoError(t, getErr)
+	assert.Empty(t, stored.Plan)
+	assert.Zero(t, stored.BalanceMicros)
+	assert.Empty(t, stored.BalanceCurrency)
+	assert.Zero(t, stored.FailureCount)
+	assert.Zero(t, stored.ConcurrentRequests)
+	assert.Zero(t, stored.LastCheckedAt)
+	assert.Empty(t, stored.LastErrorCode)
+	assert.Empty(t, stored.LastErrorMessage)
+	bindings, listErr = model.ListSearchCapabilityBindings(capability.Id, true)
+	require.NoError(t, listErr)
+	assert.Empty(t, bindings, "successful provider switch must disable routes discovered for the old provider")
 }
 
 func TestControlPlaneProbeFailureReturnsSafeError(t *testing.T) {
 	openRuntimeTestDB(t)
-	connector := &runtimeFakeConnector{accountErr: errors.New("secret upstream response")}
-	control := NewControlPlane(func(*model.SearchUpstreamAccount, string) (UpstreamConnector, error) { return connector, nil })
+	adapter := &runtimeFakeAdapter{probeErr: errors.New("secret upstream response")}
+	control := NewControlPlane(func(*model.SearchUpstreamAccount, string) (ProviderAdapter, error) { return adapter, nil })
 	account, err := control.SaveAccount(context.Background(), AccountCommand{Name: "primary", Secret: "ak_live_probe"})
 	require.NoError(t, err)
 	_, err = control.ProbeAccount(context.Background(), account.ID)
@@ -1408,4 +1323,28 @@ func TestControlPlaneProbeFailureReturnsSafeError(t *testing.T) {
 	stored, getErr := model.GetSearchUpstreamAccountByID(account.ID)
 	require.NoError(t, getErr)
 	assert.Equal(t, model.SearchUpstreamAccountStatusWarning, stored.Status)
+}
+
+func TestControlPlaneUnsupportedProbePreservesHealthyAccountWithoutFailureIncrement(t *testing.T) {
+	openRuntimeTestDB(t)
+	adapter := &runtimeFakeAdapter{probeErr: newConnectorError(
+		"UPSTREAM_PROBE_UNSUPPORTED", http.StatusNotImplemented, "该上游不提供无计费健康检查。",
+	)}
+	control := NewControlPlane(func(*model.SearchUpstreamAccount, string) (ProviderAdapter, error) { return adapter, nil })
+	account, err := control.SaveAccount(context.Background(), AccountCommand{
+		Name: "justone-primary", Provider: ProviderJustOneAPI, Secret: "jo_live_probe", Status: "healthy",
+	})
+	require.NoError(t, err)
+
+	_, err = control.ProbeAccount(context.Background(), account.ID)
+
+	var publicErr *PublicError
+	require.ErrorAs(t, err, &publicErr)
+	assert.Equal(t, "UPSTREAM_PROBE_UNSUPPORTED", publicErr.Code)
+	stored, getErr := model.GetSearchUpstreamAccountByID(account.ID)
+	require.NoError(t, getErr)
+	assert.Equal(t, model.SearchUpstreamAccountStatusHealthy, stored.Status)
+	assert.Zero(t, stored.FailureCount)
+	assert.Equal(t, "UPSTREAM_PROBE_UNSUPPORTED", stored.LastErrorCode)
+	assert.NotEmpty(t, stored.LastErrorMessage)
 }

@@ -42,7 +42,6 @@ import type { SidebarData } from '@/components/layout/types'
 import { canViewEnterprise } from '@/features/enterprise/lib/permissions'
 import {
   canManageSearch,
-  canManageSearchAgentKeys,
   canViewSearchUsage,
 } from '@/features/search/route-guard'
 import { ROLE } from '@/lib/roles'
@@ -59,7 +58,6 @@ export function useSidebarData(): SidebarData {
   const user = useAuthStore((state) => state.auth.user)
   const canViewEnterpriseModule = canViewEnterprise(user)
   const canManageSearchModule = canManageSearch(user)
-  const canManageSearchAgentKeysModule = canManageSearchAgentKeys(user)
   const canViewSearchUsageModule = canViewSearchUsage(user)
 
   return {
@@ -182,12 +180,13 @@ export function useSidebarData(): SidebarData {
                 },
               ]
             : []),
-          ...(canManageSearchAgentKeysModule
+          ...(canManageSearchModule
             ? [
                 {
                   title: t('vSearch keys'),
-                  url: '/search/admin/agent-keys',
+                  url: '/search/admin/keys',
                   icon: Key,
+                  requiredRole: ROLE.SUPER_ADMIN,
                 },
               ]
             : []),

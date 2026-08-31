@@ -13,18 +13,20 @@ import (
 )
 
 type PublicCatalogGroup struct {
-	ID              string `json:"id"`
-	Name            string `json:"name"`
-	Category        string `json:"category"`
-	Description     string `json:"description"`
-	Status          string `json:"status"`
-	Enabled         bool   `json:"enabled"`
-	InterfaceCount  int64  `json:"interface_count"`
-	CostLabel       string `json:"cost_label"`
-	PriceMinMicros  int64  `json:"price_min_micros"`
-	PriceMaxMicros  int64  `json:"price_max_micros"`
-	RecentLatencyMs *int64 `json:"recent_latency_ms,omitempty"`
-	LastSyncedAt    int64  `json:"last_synced_at"`
+	ID                      string   `json:"id"`
+	Name                    string   `json:"name"`
+	Category                string   `json:"category"`
+	Description             string   `json:"description"`
+	Status                  string   `json:"status"`
+	Enabled                 bool     `json:"enabled"`
+	SupportedPlatforms      []string `json:"supported_platforms"`
+	InterfaceCount          int64    `json:"interface_count"`
+	AvailableInterfaceCount int64    `json:"available_interface_count"`
+	CostLabel               string   `json:"cost_label"`
+	PriceMinMicros          int64    `json:"price_min_micros"`
+	PriceMaxMicros          int64    `json:"price_max_micros"`
+	RecentLatencyMs         *int64   `json:"recent_latency_ms,omitempty"`
+	LastSyncedAt            int64    `json:"last_synced_at"`
 }
 
 type catalogGroupAccumulator struct {
@@ -34,7 +36,9 @@ type catalogGroupAccumulator struct {
 	descriptions map[string]int
 	visibleTools map[string]struct{}
 	callable     map[string]struct{}
+	platforms    map[string]struct{}
 	prices       []int64
+	published    bool
 	lastSyncedAt int64
 }
 
@@ -120,33 +124,67 @@ var catalogBrokerPlatformPatterns = []struct {
 }
 
 func (runtime *ExecutionRuntime) ListCatalogGroups(ctx context.Context, principal Principal) ([]PublicCatalogGroup, error) {
-	catalog, err := loadCatalogSnapshot(principal, false)
+	catalog, err := loadCatalogSnapshot(principal, true, true)
 	if err != nil {
 		return nil, err
 	}
+	return productCatalogGroups(catalog), nil
+}
+
+func (runtime *ExecutionRuntime) ListPublicCatalog(ctx context.Context) ([]PublicCatalogGroup, error) {
+	catalog, err := loadCatalogSnapshot(Principal{}, true, false)
+	if err != nil {
+		return nil, err
+	}
+	return productCatalogGroups(catalog), nil
+}
+
+func productCatalogGroups(catalog []catalogSnapshotItem) []PublicCatalogGroup {
 	groups := make(map[string]*catalogGroupAccumulator)
 	for _, entry := range catalog {
 		capability := entry.capability
-		bindings := entry.bindings
 		item := entry.public
-		groupKey, label, toolIdentity := catalogGroupIdentity(capability, bindings)
+		groupKey, label, toolIdentity := catalogGroupIdentity(capability, entry.declaredBindings)
+		if capability.ContractVersion != "legacy-v1" {
+			groupKey = "capability:" + capability.PublicID
+			label = safeCatalogGroupLabel(capability.Name)
+			toolIdentity = capability.PublicID
+		}
 		group := groups[groupKey]
 		if group == nil {
 			group = &catalogGroupAccumulator{
 				key: groupKey, label: label, categories: make(map[string]int), descriptions: make(map[string]int),
-				visibleTools: make(map[string]struct{}), callable: make(map[string]struct{}), prices: make([]int64, 0),
+				visibleTools: make(map[string]struct{}), callable: make(map[string]struct{}), platforms: make(map[string]struct{}),
+				prices: make([]int64, 0),
 			}
 			groups[groupKey] = group
 		}
-		group.visibleTools[toolIdentity] = struct{}{}
-		if item.Enabled {
-			group.callable[toolIdentity] = struct{}{}
+		if capability.ContractVersion == "legacy-v1" {
+			group.visibleTools[toolIdentity] = struct{}{}
+			if item.Enabled {
+				group.callable[toolIdentity] = struct{}{}
+			}
+		} else {
+			for _, binding := range entry.declaredBindings {
+				group.visibleTools[catalogBindingIdentity(binding)] = struct{}{}
+			}
+			for _, binding := range entry.availableBindings {
+				group.callable[catalogBindingIdentity(binding)] = struct{}{}
+			}
 		}
+		for _, binding := range entry.declaredBindings {
+			if platform := strings.ToLower(strings.TrimSpace(binding.Platform)); platform != "" {
+				group.platforms[platform] = struct{}{}
+			}
+		}
+		group.published = group.published || capability.Status == model.SearchCapabilityStatusEnabled
 		group.categories[item.Category]++
 		if description := strings.TrimSpace(item.Description); description != "" {
 			group.descriptions[description]++
 		}
-		group.prices = append(group.prices, item.PriceMicros)
+		if capability.Status == model.SearchCapabilityStatusEnabled {
+			group.prices = append(group.prices, item.PriceMicros)
+		}
 		if item.LastSyncedAt > group.lastSyncedAt {
 			group.lastSyncedAt = item.LastSyncedAt
 		}
@@ -180,14 +218,28 @@ func (runtime *ExecutionRuntime) ListCatalogGroups(ctx context.Context, principa
 		}
 		minPrice, maxPrice := catalogPriceRange(group.prices)
 		available := len(group.callable) > 0
-		status := "unavailable"
+		status := "catalog"
 		if available {
 			status = "available"
+		} else if group.published {
+			status = "unavailable"
+		}
+		platforms := make([]string, 0, len(group.platforms))
+		for platform := range group.platforms {
+			platforms = append(platforms, platform)
+		}
+		sort.Strings(platforms)
+		costLabel := catalogPriceLabel(minPrice, maxPrice)
+		if !group.published {
+			costLabel = ""
+			minPrice = 0
+			maxPrice = 0
 		}
 		result = append(result, PublicCatalogGroup{
 			ID: catalogGroupPublicID(group.key), Name: name, Category: category, Description: description,
-			Status: status, Enabled: available, InterfaceCount: int64(len(group.callable)),
-			CostLabel: catalogPriceLabel(minPrice, maxPrice), PriceMinMicros: minPrice, PriceMaxMicros: maxPrice,
+			Status: status, Enabled: available, SupportedPlatforms: platforms,
+			InterfaceCount: int64(len(group.visibleTools)), AvailableInterfaceCount: int64(len(group.callable)),
+			CostLabel: costLabel, PriceMinMicros: minPrice, PriceMaxMicros: maxPrice,
 			LastSyncedAt: group.lastSyncedAt,
 		})
 	}
@@ -197,7 +249,18 @@ func (runtime *ExecutionRuntime) ListCatalogGroups(ctx context.Context, principa
 		}
 		return result[i].Category < result[j].Category
 	})
-	return result, nil
+	return result
+}
+
+func catalogBindingIdentity(binding *model.SearchCapabilityBinding) string {
+	if binding == nil {
+		return ""
+	}
+	return strings.Join([]string{
+		strings.ToLower(strings.TrimSpace(binding.MappingKey)),
+		strings.ToLower(strings.TrimSpace(binding.Platform)),
+		strings.ToLower(strings.TrimSpace(binding.ProviderOperationID)),
+	}, "\x00")
 }
 
 func catalogGroupIdentity(capability *model.SearchCapability, bindings []*model.SearchCapabilityBinding) (string, string, string) {

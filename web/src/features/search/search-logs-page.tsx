@@ -319,7 +319,7 @@ function LogTable(props: {
           <th className='px-5 py-3 font-medium'>{props.t('Time')}</th>
           <th className='px-5 py-3 font-medium'>{props.t('Service')}</th>
           <th className='px-5 py-3 font-medium'>{props.t('Endpoint')}</th>
-          <th className='px-5 py-3 font-medium'>{props.t('AgentKey')}</th>
+          <th className='px-5 py-3 font-medium'>{props.t('vSearch key')}</th>
           <th className='px-5 py-3 font-medium'>{props.t('Status')}</th>
           <th className='px-5 py-3 text-right font-medium'>
             {props.t('Latency')}
@@ -339,7 +339,7 @@ function LogTable(props: {
               {log.endpoint || '—'}
             </td>
             <td className='text-muted-foreground max-w-40 truncate px-5 py-3'>
-              {log.agent_key_name || '—'}
+              {log.key_name || '—'}
             </td>
             <td className='px-5 py-3'>
               <LogStatus status={log.status} t={props.t} />
@@ -374,8 +374,8 @@ function LogMobileCard(props: {
         <span>{formatTimestamp(log.created_at)}</span>
         <span className='font-mono'>{formatLatency(log.latency_ms)}</span>
       </div>
-      {log.agent_key_name && (
-        <p className='text-muted-foreground text-xs'>{log.agent_key_name}</p>
+      {log.key_name && (
+        <p className='text-muted-foreground text-xs'>{log.key_name}</p>
       )}
     </article>
   )
