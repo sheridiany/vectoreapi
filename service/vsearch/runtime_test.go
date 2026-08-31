@@ -1061,6 +1061,18 @@ func TestControlPlaneSyncCreatesDraftCapabilitiesFromStandardCatalog(t *testing.
 	capabilities, err := model.ListSearchCapabilities(true)
 	require.NoError(t, err)
 	require.NotEmpty(t, capabilities)
+	verifiedBindings := map[string]struct{}{
+		"social.account.get/youtube":                {},
+		"social.account.contents.list/youtube":      {},
+		"social.content.get/youtube":                {},
+		"social.content.search/youtube":             {},
+		"social.comment.list/youtube":               {},
+		"social.comment.replies.list/youtube":       {},
+		"social.trend.list/douyin":                  {},
+		"commerce.product.search/tiktok_shop":       {},
+		"commerce.product.get/tiktok_shop":          {},
+		"commerce.product.reviews.list/tiktok_shop": {},
+	}
 	for _, capability := range capabilities {
 		assert.Equal(t, model.SearchCapabilityStatusDisabled, capability.Status)
 		assert.Equal(t, model.SearchCapabilitySchemaAvailable, capability.SchemaStatus)
@@ -1070,12 +1082,12 @@ func TestControlPlaneSyncCreatesDraftCapabilitiesFromStandardCatalog(t *testing.
 		require.NoError(t, bindingErr)
 		require.NotEmpty(t, bindings)
 		for _, binding := range bindings {
-			verifiedTrend := capability.OperationKey == "social.trend.list" && binding.Platform == "douyin"
-			assert.Equal(t, verifiedTrend, binding.ContractEquivalent)
-			assert.Equal(t, verifiedTrend, binding.BillingReady)
+			_, verified := verifiedBindings[capability.OperationKey+"/"+binding.Platform]
+			assert.Equal(t, verified, binding.ContractEquivalent)
+			assert.Equal(t, verified, binding.BillingReady)
 			assert.Equal(t, "tikhub.direct.v1", binding.MappingKey)
 			assert.Equal(t, "CNY", binding.CostCurrency)
-			if verifiedTrend {
+			if verified {
 				assert.Positive(t, binding.UpstreamCostMicros)
 				assert.Equal(t, binding.UpstreamCostMicros, capability.PriceMicros, "verified ability must use the normalized upstream cost without markup")
 			}
@@ -1085,13 +1097,8 @@ func TestControlPlaneSyncCreatesDraftCapabilitiesFromStandardCatalog(t *testing.
 	require.NoError(t, err)
 	require.NotEmpty(t, catalog)
 	for _, item := range catalog {
-		if item.Name == "平台趋势榜" {
-			assert.Equal(t, "verified", item.ContractStatus)
-			assert.Equal(t, int64(1), item.HealthyRouteCount)
-		} else {
-			assert.Equal(t, "unverified", item.ContractStatus)
-			assert.Zero(t, item.HealthyRouteCount)
-		}
+		assert.Equal(t, "verified", item.ContractStatus)
+		assert.Equal(t, int64(1), item.HealthyRouteCount)
 		assert.False(t, item.Enabled)
 	}
 }
@@ -1163,7 +1170,19 @@ func TestControlPlaneSyncDisablesRemovedJustOneAPIOperations(t *testing.T) {
 
 func TestControlPlaneRejectsPublishingUnverifiedStandardContract(t *testing.T) {
 	openRuntimeTestDB(t)
-	adapter := &runtimeFakeAdapter{snapshot: standardProviderCatalog(ProviderTikHub)}
+	snapshot := standardProviderCatalog(ProviderTikHub)
+	var unverifiedOperationKey string
+	for index := range snapshot.Operations {
+		if snapshot.Operations[index].ContractEquivalent {
+			unverifiedOperationKey = snapshot.Operations[index].OperationKey
+			snapshot.Operations[index].ContractEquivalent = false
+			snapshot.Operations[index].BillingReady = false
+			snapshot.Operations[index].CostAmountMicros = 0
+			break
+		}
+	}
+	require.NotEmpty(t, unverifiedOperationKey)
+	adapter := &runtimeFakeAdapter{snapshot: snapshot}
 	control := NewControlPlane(func(*model.SearchUpstreamAccount, string) (ProviderAdapter, error) {
 		return adapter, nil
 	})
@@ -1176,7 +1195,10 @@ func TestControlPlaneRejectsPublishingUnverifiedStandardContract(t *testing.T) {
 	capabilities, err := model.ListSearchCapabilities(true)
 	require.NoError(t, err)
 	require.NotEmpty(t, capabilities)
-	capability := capabilities[0]
+	serviceID, err := model.GenerateSearchCapabilityPublicID(unverifiedOperationKey + "@v1")
+	require.NoError(t, err)
+	capability, err := model.GetSearchCapabilityByPublicID(serviceID)
+	require.NoError(t, err)
 
 	published, err := control.PublishCatalog(context.Background(), PublishCommand{
 		ServiceIDs: []string{capability.PublicID}, AccessMode: PublishAccessAllEnterprises,

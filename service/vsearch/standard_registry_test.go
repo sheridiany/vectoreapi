@@ -54,6 +54,18 @@ func TestStandardCapabilityRegistryContainsOnlyTikHubAndSafeHTTPBindings(t *test
 	}
 	seenProviders := make(map[string]struct{}, len(allowedProviders))
 	seenOperations := make(map[string]struct{})
+	verifiedCosts := map[string]int64{
+		"social.account.get/youtube":                1_000,
+		"social.account.contents.list/youtube":      1_000,
+		"social.content.get/youtube":                1_000,
+		"social.content.search/youtube":             2_000,
+		"social.comment.list/youtube":               1_000,
+		"social.comment.replies.list/youtube":       1_000,
+		"social.trend.list/douyin":                  1_000,
+		"commerce.product.search/tiktok_shop":       1_000,
+		"commerce.product.get/tiktok_shop":          1_000,
+		"commerce.product.reviews.list/tiktok_shop": 1_000,
+	}
 	for _, definition := range standardCapabilityRegistry() {
 		require.NotEmpty(t, definition.Bindings, definition.OperationKey)
 		for _, operation := range definition.Bindings {
@@ -66,11 +78,11 @@ func TestStandardCapabilityRegistryContainsOnlyTikHubAndSafeHTTPBindings(t *test
 			} else {
 				assert.Empty(t, operation.CostCurrency, operation.OperationID)
 			}
-			verifiedTrend := operation.OperationKey == "social.trend.list" && operation.Platform == "douyin"
-			assert.Equal(t, verifiedTrend, operation.ContractEquivalent, operation.OperationID)
-			assert.Equal(t, verifiedTrend, operation.BillingReady, operation.OperationID)
-			if verifiedTrend {
-				assert.Equal(t, int64(2_000), operation.CostAmountMicros, operation.OperationID)
+			expectedCost, verified := verifiedCosts[operation.OperationKey+"/"+operation.Platform]
+			assert.Equal(t, verified, operation.ContractEquivalent, operation.OperationID)
+			assert.Equal(t, verified, operation.BillingReady, operation.OperationID)
+			if verified {
+				assert.Equal(t, expectedCost, operation.CostAmountMicros, operation.OperationID)
 			}
 			seenProviders[provider] = struct{}{}
 
@@ -122,6 +134,7 @@ func TestStandardCapabilityRegistryOnlyMapsWhitelistedCanonicalParameters(t *tes
 		"page_start": {}, "page_size": {}, "uid": {}, "raw": {}, "channel_id": {}, "url": {}, "id": {}, "query": {},
 		"object_id": {}, "post_id": {}, "urn": {}, "business_type": {}, "continuation_token": {},
 		"need_format": {}, "type": {}, "search_type": {}, "allow_nsfw": {}, "video_id": {}, "content_id": {},
+		"sort_rule": {}, "filter_type": {}, "filter_value": {}, "region": {},
 	}
 	for _, definition := range standardCapabilityRegistry() {
 		properties, ok := definition.InputSchema["properties"].(map[string]any)

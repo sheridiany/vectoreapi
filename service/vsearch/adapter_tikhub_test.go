@@ -230,6 +230,201 @@ func TestTikHubAdapterRejectsMalformedDouyinTrendListAfterDispatch(t *testing.T)
 	assert.Nil(t, result.Data)
 }
 
+func TestTikHubAdapterNormalizesVerifiedYouTubeContracts(t *testing.T) {
+	tests := []struct {
+		name      string
+		operation ProviderOperation
+		request   CanonicalRequest
+		response  string
+		assertion func(*testing.T, map[string]any)
+	}{
+		{
+			name: "account",
+			operation: ProviderOperation{OperationKey: "social.account.get", ContractVersion: "v1", Platform: "youtube", Method: http.MethodGet,
+				Path: "/account", AuthPlacement: AuthPlacementBearer, MappingKey: tikHubDirectMappingKey, MappingVersion: "v1",
+				ParameterMap: map[string]string{"account_ref": "channel_id"}, OutputSchema: entityOutputSchema("account")},
+			request: CanonicalRequest{OperationKey: "social.account.get", Platform: "youtube", Params: map[string]any{"platform": "youtube", "account_ref": "UC1"}},
+			response: `{"code":200,"data":{"channel_id":"UC1","title":"Channel One","description":"Public channel","verified":true,
+				"subscriber_count":"1.2M","video_count":"345","avatar":[{"url":"https://img.example/avatar.jpg"}]}}`,
+			assertion: func(t *testing.T, data map[string]any) {
+				assert.Equal(t, "UC1", data["id"])
+				assert.Equal(t, "Channel One", data["display_name"])
+				assert.Equal(t, int64(1_200_000), data["follower_count"])
+			},
+		},
+		{
+			name: "account contents",
+			operation: ProviderOperation{OperationKey: "social.account.contents.list", ContractVersion: "v1", Platform: "youtube", Method: http.MethodGet,
+				Path: "/account-contents", AuthPlacement: AuthPlacementBearer, MappingKey: tikHubDirectMappingKey, MappingVersion: "v1",
+				ParameterMap: map[string]string{"account_ref": "channel_id"}, FixedParams: map[string]any{"need_format": true}, OutputSchema: listOutputSchema("content")},
+			request: CanonicalRequest{OperationKey: "social.account.contents.list", Platform: "youtube", Params: map[string]any{"platform": "youtube", "account_ref": "UC1"}},
+			response: `{"code":200,"data":{"channel":{"id":"UC1","name":"Channel One","url":"https://youtube.example/c/one"},
+				"continuation_token":"next-videos","videos":[{"video_id":"video-1","title":"First video","description":"Summary",
+				"url":"https://youtube.example/watch?v=video-1","published_time":"1 day ago","view_count":"12,345","thumbnail":"https://img.example/video.jpg"}]}}`,
+			assertion: func(t *testing.T, data map[string]any) {
+				items := data["items"].([]any)
+				assert.Equal(t, "video-1", items[0].(map[string]any)["id"])
+				assert.Equal(t, map[string]any{"cursor": "next-videos", "has_more": true}, data["page"])
+			},
+		},
+		{
+			name: "content",
+			operation: ProviderOperation{OperationKey: "social.content.get", ContractVersion: "v1", Platform: "youtube", Method: http.MethodGet,
+				Path: "/content", AuthPlacement: AuthPlacementBearer, MappingKey: tikHubDirectMappingKey, MappingVersion: "v1",
+				ParameterMap: map[string]string{"content_ref": "video_id"}, FixedParams: map[string]any{"need_format": true}, OutputSchema: entityOutputSchema("content")},
+			request: CanonicalRequest{OperationKey: "social.content.get", Platform: "youtube", Params: map[string]any{"platform": "youtube", "content_ref": "video-1"}},
+			response: `{"code":200,"data":{"video_id":"video-1","video_url":"https://youtube.example/watch?v=video-1","title":"First video",
+				"description":"Summary","channel_id":"UC1","author":"Channel One","upload_date":"2026-08-31","view_count":"12345","like_count":"678",
+				"comment_count":"90","thumbnails":[{"url":"https://img.example/video.jpg"}]}}`,
+			assertion: func(t *testing.T, data map[string]any) {
+				assert.Equal(t, "video-1", data["id"])
+				assert.Equal(t, map[string]any{"view_count": int64(12345), "like_count": int64(678), "comment_count": int64(90)}, data["metrics"])
+			},
+		},
+		{
+			name: "search",
+			operation: ProviderOperation{OperationKey: "social.content.search", ContractVersion: "v1", Platform: "youtube", Method: http.MethodGet,
+				Path: "/search", AuthPlacement: AuthPlacementBearer, MappingKey: tikHubDirectMappingKey, MappingVersion: "v1",
+				ParameterMap: map[string]string{"query": "keyword"}, FixedParams: map[string]any{"type": "video"}, OutputSchema: listOutputSchema("content")},
+			request: CanonicalRequest{OperationKey: "social.content.search", Platform: "youtube", Params: map[string]any{"platform": "youtube", "query": "OpenAI"}},
+			response: `{"code":200,"data":{"continuation_token":"next-search","videos":[{"video_id":"video-2","title":"Search result",
+				"author":"Channel Two","channel_id":"UC2","url":"https://youtube.example/watch?v=video-2","view_count":"999"}]}}`,
+			assertion: func(t *testing.T, data map[string]any) {
+				items := data["items"].([]any)
+				assert.Equal(t, "video-2", items[0].(map[string]any)["id"])
+			},
+		},
+		{
+			name: "comments",
+			operation: ProviderOperation{OperationKey: "social.comment.list", ContractVersion: "v1", Platform: "youtube", Method: http.MethodGet,
+				Path: "/comments", AuthPlacement: AuthPlacementBearer, MappingKey: tikHubDirectMappingKey, MappingVersion: "v1",
+				ParameterMap: map[string]string{"content_ref": "video_id"}, FixedParams: map[string]any{"need_format": true}, OutputSchema: listOutputSchema("comment")},
+			request: CanonicalRequest{OperationKey: "social.comment.list", Platform: "youtube", Params: map[string]any{"platform": "youtube", "content_ref": "video-1"}},
+			response: `{"code":200,"data":{"continuation_token":"next-comments","comments":[{"comment_id":"comment-1","content":"Useful",
+				"published_time":"2 hours ago","like_count":"42","reply_count":"3","reply_continuation_token":"reply-cursor-1",
+				"author":{"channel_id":"UC3","display_name":"Viewer","channel_url":"https://youtube.example/c/viewer","avatar_url":"https://img.example/viewer.jpg"}}]}}`,
+			assertion: func(t *testing.T, data map[string]any) {
+				items := data["items"].([]any)
+				comment := items[0].(map[string]any)
+				assert.Equal(t, "comment-1", comment["id"])
+				assert.Equal(t, "reply-cursor-1", comment["reply_cursor"])
+			},
+		},
+		{
+			name: "replies ignores content context",
+			operation: ProviderOperation{OperationKey: "social.comment.replies.list", ContractVersion: "v1", Platform: "youtube", Method: http.MethodGet,
+				Path: "/replies", AuthPlacement: AuthPlacementBearer, MappingKey: tikHubDirectMappingKey, MappingVersion: "v1",
+				ParameterMap: map[string]string{"comment_ref": "continuation_token"}, FixedParams: map[string]any{"need_format": true}, OutputSchema: listOutputSchema("comment")},
+			request: CanonicalRequest{OperationKey: "social.comment.replies.list", Platform: "youtube", Params: map[string]any{
+				"platform": "youtube", "content_ref": "video-1", "comment_ref": "reply-cursor-1"}},
+			response: `{"code":200,"data":{"continuation_token":null,"comments":[{"comment_id":"reply-1","content":"Thanks",
+				"published_time":"1 hour ago","like_count":"2","reply_count":"0","reply_level":1,
+				"author":{"channel_id":"UC4","display_name":"Author"}}]}}`,
+			assertion: func(t *testing.T, data map[string]any) {
+				items := data["items"].([]any)
+				assert.Equal(t, "reply-1", items[0].(map[string]any)["id"])
+			},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+				if test.name == "replies ignores content context" {
+					assert.Empty(t, request.URL.Query().Get("content_ref"))
+					assert.Equal(t, "reply-cursor-1", request.URL.Query().Get("continuation_token"))
+				}
+				response.Header().Set("Content-Type", "application/json")
+				_, _ = response.Write([]byte(test.response))
+			}))
+			t.Cleanup(server.Close)
+			adapter := newTikHubTestAdapter(t, server.URL, nil)
+
+			result, err := adapter.Execute(context.Background(), test.operation, test.request)
+
+			require.NoError(t, err)
+			require.NoError(t, validateSchemaValue(result.Data, test.operation.OutputSchema, "$"))
+			data, ok := result.Data.(map[string]any)
+			require.True(t, ok)
+			test.assertion(t, data)
+		})
+	}
+}
+
+func TestTikHubAdapterNormalizesNestedTikTokShopContracts(t *testing.T) {
+	tests := []struct {
+		name      string
+		operation ProviderOperation
+		response  string
+		expected  string
+	}{
+		{
+			name: "search",
+			operation: ProviderOperation{OperationKey: "commerce.product.search", ContractVersion: "v1", Platform: "tiktok_shop", Method: http.MethodGet,
+				Path: "/shop-search", AuthPlacement: AuthPlacementBearer, MappingKey: tikHubDirectMappingKey, MappingVersion: "v1", OutputSchema: listOutputSchema("product")},
+			response: `{"code":200,"data":{"code":0,"message":"success","data":{"has_more":true,"load_more_params":{"page_token":"next-products"},
+				"products":[{"product_id":"product-1","title":"Product One","seo_url":"https://shop.example/product-1",
+				"image":{"url":"https://img.example/product.jpg"},"seller_info":{"seller_id":"seller-1","shop_name":"Shop One"},
+				"product_price_info":{"sale_price":"12.34"},"rate_info":{"rating":"4.8"},"sold_info":{"sold_count":"123"}}]}}}`,
+			expected: "product-1",
+		},
+		{
+			name: "detail",
+			operation: ProviderOperation{OperationKey: "commerce.product.get", ContractVersion: "v1", Platform: "tiktok_shop", Method: http.MethodGet,
+				Path: "/shop-detail", AuthPlacement: AuthPlacementBearer, MappingKey: tikHubDirectMappingKey, MappingVersion: "v1", OutputSchema: entityOutputSchema("product")},
+			response: `{"code":200,"data":{"code":0,"message":"success","data":{"global_data":{"product_info":{"product_info":{
+				"product_id":"product-1","title":"Product One","seo_url":"https://shop.example/product-1","description":"Public description",
+				"images":[{"url":"https://img.example/product.jpg"}],"seller_info":{"seller_id":"seller-1","shop_name":"Shop One"}}}}}}}`,
+			expected: "product-1",
+		},
+		{
+			name: "reviews",
+			operation: ProviderOperation{OperationKey: "commerce.product.reviews.list", ContractVersion: "v1", Platform: "tiktok_shop", Method: http.MethodGet,
+				Path: "/shop-reviews", AuthPlacement: AuthPlacementBearer, MappingKey: tikHubDirectMappingKey, MappingVersion: "v1", OutputSchema: listOutputSchema("review")},
+			response: `{"code":200,"data":{"code":0,"message":"success","data":{"has_more":false,"reviews":[{
+				"review_id":"review-1","content":"Works well","create_time":"2026-08-31T00:00:00Z","like_count":5,
+				"author":{"user_id":"buyer-1","display_name":"Buyer"}}]}}}`,
+			expected: "review-1",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+				response.Header().Set("Content-Type", "application/json")
+				_, _ = response.Write([]byte(test.response))
+			}))
+			t.Cleanup(server.Close)
+			adapter := newTikHubTestAdapter(t, server.URL, nil)
+
+			result, err := adapter.Execute(context.Background(), test.operation, CanonicalRequest{OperationKey: test.operation.OperationKey, Platform: "tiktok_shop"})
+
+			require.NoError(t, err)
+			require.NoError(t, validateSchemaValue(result.Data, test.operation.OutputSchema, "$"))
+			data, ok := result.Data.(map[string]any)
+			require.True(t, ok)
+			if items, ok := data["items"].([]any); ok {
+				require.NotEmpty(t, items)
+				assert.Equal(t, test.expected, items[0].(map[string]any)["id"])
+			} else {
+				assert.Equal(t, test.expected, data["id"])
+			}
+		})
+	}
+}
+
+func TestTikHubCatalogUsesCurrentTikTokShopReviewsV2Binding(t *testing.T) {
+	snapshot := standardProviderCatalog(ProviderTikHub)
+	for _, operation := range snapshot.Operations {
+		if operation.OperationKey == "commerce.product.reviews.list" && operation.Platform == "tiktok_shop" {
+			assert.Equal(t, "/api/v1/tiktok/shop/web/fetch_product_reviews_v2", operation.Path)
+			assert.NotContains(t, operation.FixedParams, "page_size")
+			return
+		}
+	}
+	t.Fatal("TikTok Shop review binding not found")
+}
+
 func TestTikHubAdapterRejectsInvalidDouyinTrendID(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
 		response.Header().Set("Content-Type", "application/json")
@@ -407,14 +602,27 @@ func TestTikHubAdapterReturnsOnlyCuratedCatalogBindings(t *testing.T) {
 	assert.NotEmpty(t, snapshot.Version)
 	assert.NotEmpty(t, snapshot.SchemaHash)
 	require.NotEmpty(t, snapshot.Operations)
+	verifiedCosts := map[string]int64{
+		"social.account.get/youtube":                1_000,
+		"social.account.contents.list/youtube":      1_000,
+		"social.content.get/youtube":                1_000,
+		"social.content.search/youtube":             2_000,
+		"social.comment.list/youtube":               1_000,
+		"social.comment.replies.list/youtube":       1_000,
+		"social.trend.list/douyin":                  1_000,
+		"commerce.product.search/tiktok_shop":       1_000,
+		"commerce.product.get/tiktok_shop":          1_000,
+		"commerce.product.reviews.list/tiktok_shop": 1_000,
+	}
 	verified := 0
 	for _, operation := range snapshot.Operations {
 		assert.Equal(t, tikHubDirectMappingKey, operation.MappingKey)
 		assert.Equal(t, "USD", operation.CostCurrency)
-		if operation.OperationKey == "social.trend.list" && operation.Platform == "douyin" {
+		cost, expectedVerified := verifiedCosts[operation.OperationKey+"/"+operation.Platform]
+		if expectedVerified {
 			assert.True(t, operation.ContractEquivalent)
 			assert.True(t, operation.BillingReady)
-			assert.Equal(t, int64(2_000), operation.CostAmountMicros)
+			assert.Equal(t, cost, operation.CostAmountMicros)
 			verified++
 		} else {
 			assert.False(t, operation.ContractEquivalent)
@@ -426,7 +634,7 @@ func TestTikHubAdapterReturnsOnlyCuratedCatalogBindings(t *testing.T) {
 		assert.NotEmpty(t, operation.OperationID)
 		assert.True(t, strings.HasPrefix(operation.Path, "/api/"), operation.OperationID)
 	}
-	assert.Equal(t, 1, verified)
+	assert.Equal(t, len(verifiedCosts), verified)
 }
 
 func TestTikHubAdapterDisablesRedirectsEvenWithCustomClient(t *testing.T) {

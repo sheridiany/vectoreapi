@@ -231,15 +231,9 @@ func (a *TikHubAdapter) Execute(ctx context.Context, operation ProviderOperation
 		return result, tikHubHTTPError(payload.Code)
 	}
 	result.Billable = tikHubBool(true)
-	if operation.OperationKey == "social.trend.list" {
-		result.Data, err = normalizeTikHubTrendList(payload.Data, operation.Platform)
-		if err != nil {
-			return result, err
-		}
-		return result, nil
-	}
-	if err := common.Unmarshal(payload.Data, &result.Data); err != nil {
-		return result, newConnectorError("UPSTREAM_INVALID_RESPONSE", http.StatusBadGateway, "上游服务返回了无效响应。")
+	result.Data, err = normalizeTikHubResult(payload.Data, operation)
+	if err != nil {
+		return result, err
 	}
 	return result, nil
 }
@@ -372,6 +366,9 @@ func mapTikHubParams(operation ProviderOperation, request CanonicalRequest) (map
 		}
 		providerName, ok := operation.ParameterMap[canonicalName]
 		providerName = strings.TrimSpace(providerName)
+		if operation.OperationKey == "social.comment.replies.list" && strings.EqualFold(operation.Platform, "youtube") && canonicalName == "content_ref" {
+			continue
+		}
 		if !ok || providerName == "" {
 			return nil, newConnectorError("UPSTREAM_PARAMETER_UNSUPPORTED", http.StatusBadRequest, "请求包含当前能力不支持的参数。")
 		}

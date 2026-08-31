@@ -8,7 +8,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 )
 
-const standardCatalogVersion = "curated-2026-08-29"
+const standardCatalogVersion = "curated-2026-08-31"
 
 type standardCapabilityDefinition struct {
 	OperationKey    string
@@ -84,10 +84,7 @@ func standardCapabilityRegistry() []standardCapabilityDefinition {
 	productListOutput := listOutputSchema("product")
 	reviewListOutput := listOutputSchema("review")
 	trendOutput := trendListOutputSchema()
-	verifiedDouyinTrend := providerGET("social.trend.list", "douyin", "fetch_hot_search_result_api_v1_douyin_web_fetch_hot_search_result_get", "/api/v1/douyin/web/fetch_hot_search_result", "tikhub.direct.v1", AuthPlacementBearer, nil, nil, trendOutput)
-	verifiedDouyinTrend.CostAmountMicros = 2_000
-	verifiedDouyinTrend.ContractEquivalent = true
-	verifiedDouyinTrend.BillingReady = true
+	verifiedDouyinTrend := verifiedProviderGET("social.trend.list", "douyin", "fetch_hot_search_result_api_v1_douyin_web_fetch_hot_search_result_get", "/api/v1/douyin/web/fetch_hot_search_result", nil, nil, trendOutput, 1_000)
 
 	return []standardCapabilityDefinition{
 		{
@@ -103,7 +100,7 @@ func standardCapabilityRegistry() []standardCapabilityDefinition {
 				providerGET("social.account.get", "weibo", "fetch_user_info_api_v1_weibo_web_v2_fetch_user_info_get", "/api/v1/weibo/web_v2/fetch_user_info", "tikhub.direct.v1", AuthPlacementBearer, map[string]string{"account_ref": "uid"}, nil, accountOutput),
 				providerPOST("social.account.get", "wechat_mp", "fetch_account_profile_api_v1_wechat_mp_v2_fetch_account_profile_post", "/api/v1/wechat_mp/v2/fetch_account_profile", map[string]string{"account_ref": "username"}, map[string]any{"raw": false}, accountOutput),
 				providerPOST("social.account.get", "wechat_channels", "fetch_user_profile_api_v1_wechat_channels_v2_fetch_user_profile_post", "/api/v1/wechat_channels/v2/fetch_user_profile", map[string]string{"account_ref": "username"}, map[string]any{"raw": false}, accountOutput),
-				providerGET("social.account.get", "youtube", "get_channel_info_api_v1_youtube_web_get_channel_info_get", "/api/v1/youtube/web/get_channel_info", "tikhub.direct.v1", AuthPlacementBearer, map[string]string{"account_ref": "channel_id"}, nil, accountOutput),
+				verifiedProviderGET("social.account.get", "youtube", "get_channel_info_api_v1_youtube_web_get_channel_info_get", "/api/v1/youtube/web/get_channel_info", map[string]string{"account_ref": "channel_id"}, nil, accountOutput, 1_000),
 				providerGET("social.account.get", "reddit", "fetch_user_profile_api_v1_reddit_app_fetch_user_profile_get", "/api/v1/reddit/app/fetch_user_profile", "tikhub.direct.v1", AuthPlacementBearer, map[string]string{"account_ref": "username"}, nil, accountOutput),
 				providerGET("social.account.get", "linkedin", "get_user_profile_api_v1_linkedin_web_v2_get_user_profile_get", "/api/v1/linkedin/web_v2/get_user_profile", "tikhub.direct.v1", AuthPlacementBearer, map[string]string{"account_ref": "url"}, nil, accountOutput),
 			},
@@ -120,7 +117,7 @@ func standardCapabilityRegistry() []standardCapabilityDefinition {
 				providerGET("social.account.contents.list", "weibo", "fetch_user_posts_api_v1_weibo_web_v2_fetch_user_posts_get", "/api/v1/weibo/web_v2/fetch_user_posts", "tikhub.direct.v1", AuthPlacementBearer, map[string]string{"account_ref": "uid"}, nil, contentListOutput),
 				providerPOST("social.account.contents.list", "wechat_mp", "fetch_account_articles_api_v1_wechat_mp_v2_fetch_account_articles_post", "/api/v1/wechat_mp/v2/fetch_account_articles", map[string]string{"account_ref": "username"}, map[string]any{"raw": false}, contentListOutput),
 				providerPOST("social.account.contents.list", "wechat_channels", "fetch_user_videos_api_v1_wechat_channels_v2_fetch_user_videos_post", "/api/v1/wechat_channels/v2/fetch_user_videos", map[string]string{"account_ref": "username"}, map[string]any{"raw": false}, contentListOutput),
-				providerGET("social.account.contents.list", "youtube", "get_channel_videos_api_v1_youtube_web_v2_get_channel_videos_get", "/api/v1/youtube/web_v2/get_channel_videos", "tikhub.direct.v1", AuthPlacementBearer, map[string]string{"account_ref": "channel_id"}, map[string]any{"need_format": true}, contentListOutput),
+				verifiedProviderGET("social.account.contents.list", "youtube", "get_channel_videos_api_v1_youtube_web_v2_get_channel_videos_get", "/api/v1/youtube/web_v2/get_channel_videos", map[string]string{"account_ref": "channel_id"}, map[string]any{"need_format": true}, contentListOutput, 1_000),
 				providerGET("social.account.contents.list", "reddit", "fetch_user_posts_api_v1_reddit_app_fetch_user_posts_get", "/api/v1/reddit/app/fetch_user_posts", "tikhub.direct.v1", AuthPlacementBearer, map[string]string{"account_ref": "username"}, map[string]any{"need_format": true}, contentListOutput),
 				providerGET("social.account.contents.list", "linkedin", "get_user_posts_api_v1_linkedin_web_v2_get_user_posts_get", "/api/v1/linkedin/web_v2/get_user_posts", "tikhub.direct.v1", AuthPlacementBearer, map[string]string{"account_ref": "url"}, nil, contentListOutput),
 			},
@@ -137,7 +134,7 @@ func standardCapabilityRegistry() []standardCapabilityDefinition {
 				providerGET("social.content.get", "weibo", "fetch_post_detail_api_v1_weibo_web_v2_fetch_post_detail_get", "/api/v1/weibo/web_v2/fetch_post_detail", "tikhub.direct.v1", AuthPlacementBearer, map[string]string{"content_ref": "id"}, nil, contentOutput),
 				providerPOST("social.content.get", "wechat_mp", "fetch_article_detail_api_v1_wechat_mp_v2_fetch_article_detail_post", "/api/v1/wechat_mp/v2/fetch_article_detail", map[string]string{"content_ref": "url"}, map[string]any{"raw": false}, contentOutput),
 				providerPOST("social.content.get", "wechat_channels", "fetch_video_detail_api_v1_wechat_channels_v2_fetch_video_detail_post", "/api/v1/wechat_channels/v2/fetch_video_detail", map[string]string{"content_ref": "object_id"}, map[string]any{"raw": false}, contentOutput),
-				providerGET("social.content.get", "youtube", "get_video_info_v2_api_v1_youtube_web_v2_get_video_info_v2_get", "/api/v1/youtube/web_v2/get_video_info_v2", "tikhub.direct.v1", AuthPlacementBearer, map[string]string{"content_ref": "video_id"}, map[string]any{"need_format": true}, contentOutput),
+				verifiedProviderGET("social.content.get", "youtube", "get_video_info_v2_api_v1_youtube_web_v2_get_video_info_v2_get", "/api/v1/youtube/web_v2/get_video_info_v2", map[string]string{"content_ref": "video_id"}, map[string]any{"need_format": true}, contentOutput, 1_000),
 				providerGET("social.content.get", "reddit", "fetch_post_details_api_v1_reddit_app_fetch_post_details_get", "/api/v1/reddit/app/fetch_post_details", "tikhub.direct.v1", AuthPlacementBearer, map[string]string{"content_ref": "post_id"}, map[string]any{"need_format": true}, contentOutput),
 				providerGET("social.content.get", "linkedin", "get_post_detail_api_v1_linkedin_web_v2_get_post_detail_get", "/api/v1/linkedin/web_v2/get_post_detail", "tikhub.direct.v1", AuthPlacementBearer, map[string]string{"content_ref": "url"}, nil, contentOutput),
 			},
@@ -156,7 +153,7 @@ func standardCapabilityRegistry() []standardCapabilityDefinition {
 				providerGET("social.content.search", "weibo", "fetch_realtime_search_api_v1_weibo_web_v2_fetch_realtime_search_get", "/api/v1/weibo/web_v2/fetch_realtime_search", "tikhub.direct.v1", AuthPlacementBearer, map[string]string{"query": "query"}, nil, contentListOutput),
 				providerPOST("social.content.search", "wechat_mp", "fetch_search_api_v1_wechat_search_v2_fetch_search_post", "/api/v1/wechat_search/v2/fetch_search", map[string]string{"query": "keyword"}, map[string]any{"business_type": "article", "raw": false}, contentListOutput),
 				providerPOST("social.content.search", "wechat_channels", "fetch_search_videos_api_v1_wechat_search_v2_fetch_search_videos_post", "/api/v1/wechat_search/v2/fetch_search_videos", map[string]string{"query": "keyword"}, map[string]any{"raw": false}, contentListOutput),
-				providerGET("social.content.search", "youtube", "get_general_search_v2_api_v1_youtube_web_v2_get_general_search_v2_get", "/api/v1/youtube/web_v2/get_general_search_v2", "tikhub.direct.v1", AuthPlacementBearer, map[string]string{"query": "keyword"}, map[string]any{"need_format": true, "type": "video"}, contentListOutput),
+				verifiedProviderGET("social.content.search", "youtube", "get_general_search_v2_api_v1_youtube_web_v2_get_general_search_v2_get", "/api/v1/youtube/web_v2/get_general_search_v2", map[string]string{"query": "keyword"}, map[string]any{"need_format": true, "type": "video"}, contentListOutput, 2_000),
 				providerGET("social.content.search", "reddit", "fetch_dynamic_search_api_v1_reddit_app_fetch_dynamic_search_get", "/api/v1/reddit/app/fetch_dynamic_search", "tikhub.direct.v1", AuthPlacementBearer, map[string]string{"query": "query"}, map[string]any{"need_format": true, "search_type": "post", "allow_nsfw": 0}, contentListOutput),
 			},
 		},
@@ -173,7 +170,7 @@ func standardCapabilityRegistry() []standardCapabilityDefinition {
 				providerGET("social.comment.list", "weibo", "fetch_post_comments_api_v1_weibo_web_v2_fetch_post_comments_get", "/api/v1/weibo/web_v2/fetch_post_comments", "tikhub.direct.v1", AuthPlacementBearer, map[string]string{"content_ref": "id"}, nil, commentListOutput),
 				providerPOST("social.comment.list", "wechat_mp", "fetch_article_comments_api_v1_wechat_mp_v2_fetch_article_comments_post", "/api/v1/wechat_mp/v2/fetch_article_comments", map[string]string{"content_ref": "url"}, map[string]any{"raw": false}, commentListOutput),
 				providerPOST("social.comment.list", "wechat_channels", "fetch_video_comments_api_v1_wechat_channels_v2_fetch_video_comments_post", "/api/v1/wechat_channels/v2/fetch_video_comments", map[string]string{"content_ref": "object_id"}, map[string]any{"raw": false}, commentListOutput),
-				providerGET("social.comment.list", "youtube", "get_video_comments_api_v1_youtube_web_v2_get_video_comments_get", "/api/v1/youtube/web_v2/get_video_comments", "tikhub.direct.v1", AuthPlacementBearer, map[string]string{"content_ref": "video_id"}, map[string]any{"need_format": true}, commentListOutput),
+				verifiedProviderGET("social.comment.list", "youtube", "get_video_comments_api_v1_youtube_web_v2_get_video_comments_get", "/api/v1/youtube/web_v2/get_video_comments", map[string]string{"content_ref": "video_id"}, map[string]any{"need_format": true}, commentListOutput, 1_000),
 				providerGET("social.comment.list", "reddit", "fetch_post_comments_api_v1_reddit_app_fetch_post_comments_get", "/api/v1/reddit/app/fetch_post_comments", "tikhub.direct.v1", AuthPlacementBearer, map[string]string{"content_ref": "post_id"}, map[string]any{"need_format": true}, commentListOutput),
 				providerGET("social.comment.list", "linkedin", "get_post_comments_api_v1_linkedin_web_v2_get_post_comments_get", "/api/v1/linkedin/web_v2/get_post_comments", "tikhub.direct.v1", AuthPlacementBearer, map[string]string{"content_ref": "urn"}, nil, commentListOutput),
 			},
@@ -192,7 +189,7 @@ func standardCapabilityRegistry() []standardCapabilityDefinition {
 				providerGET("social.comment.replies.list", "weibo", "fetch_post_sub_comments_api_v1_weibo_web_v2_fetch_post_sub_comments_get", "/api/v1/weibo/web_v2/fetch_post_sub_comments", "tikhub.direct.v1", AuthPlacementBearer, map[string]string{"comment_ref": "id"}, nil, commentListOutput),
 				providerPOST("social.comment.replies.list", "wechat_mp", "fetch_comment_replies_api_v1_wechat_mp_v2_fetch_comment_replies_post", "/api/v1/wechat_mp/v2/fetch_comment_replies", map[string]string{"content_ref": "url", "comment_ref": "content_id"}, map[string]any{"raw": false}, commentListOutput),
 				providerPOST("social.comment.replies.list", "wechat_channels", "fetch_video_comments_api_v1_wechat_channels_v2_fetch_video_comments_post", "/api/v1/wechat_channels/v2/fetch_video_comments", map[string]string{"content_ref": "object_id", "comment_ref": "comment_id"}, map[string]any{"raw": false}, commentListOutput),
-				providerGET("social.comment.replies.list", "youtube", "get_video_comment_replies_api_v1_youtube_web_v2_get_video_comment_replies_get", "/api/v1/youtube/web_v2/get_video_comment_replies", "tikhub.direct.v1", AuthPlacementBearer, map[string]string{"comment_ref": "continuation_token"}, map[string]any{"need_format": true}, commentListOutput),
+				verifiedProviderGET("social.comment.replies.list", "youtube", "get_video_comment_replies_api_v1_youtube_web_v2_get_video_comment_replies_get", "/api/v1/youtube/web_v2/get_video_comment_replies", map[string]string{"comment_ref": "continuation_token"}, map[string]any{"need_format": true}, commentListOutput, 1_000),
 				providerGET("social.comment.replies.list", "reddit", "fetch_comment_replies_api_v1_reddit_app_fetch_comment_replies_get", "/api/v1/reddit/app/fetch_comment_replies", "tikhub.direct.v1", AuthPlacementBearer, map[string]string{"content_ref": "post_id", "comment_ref": "cursor"}, map[string]any{"need_format": true}, commentListOutput),
 			},
 		},
@@ -219,7 +216,7 @@ func standardCapabilityRegistry() []standardCapabilityDefinition {
 			}, []any{"platform", "query"}),
 			OutputSchema: productListOutput,
 			Bindings: []ProviderOperation{
-				providerGET("commerce.product.search", "tiktok_shop", "fetch_search_products_list_api_v1_tiktok_shop_web_fetch_search_products_list_get", "/api/v1/tiktok/shop/web/fetch_search_products_list", "tikhub.direct.v1", AuthPlacementBearer, map[string]string{"query": "search_word"}, map[string]any{"offset": 0}, productListOutput),
+				verifiedProviderGET("commerce.product.search", "tiktok_shop", "fetch_search_products_list_api_v1_tiktok_shop_web_fetch_search_products_list_get", "/api/v1/tiktok/shop/web/fetch_search_products_list", map[string]string{"query": "search_word"}, map[string]any{"offset": 0, "region": "US"}, productListOutput, 1_000),
 				providerGET("commerce.product.search", "xiaohongshu", "search_products_api_v1_xiaohongshu_app_v2_search_products_get", "/api/v1/xiaohongshu/app_v2/search_products", "tikhub.direct.v1", AuthPlacementBearer, map[string]string{"query": "keyword"}, map[string]any{"page": 1}, productListOutput),
 			},
 		},
@@ -232,7 +229,7 @@ func standardCapabilityRegistry() []standardCapabilityDefinition {
 			}, []any{"platform", "product_ref"}),
 			OutputSchema: productOutput,
 			Bindings: []ProviderOperation{
-				providerGET("commerce.product.get", "tiktok_shop", "fetch_product_detail_api_v1_tiktok_shop_web_fetch_product_detail_get", "/api/v1/tiktok/shop/web/fetch_product_detail", "tikhub.direct.v1", AuthPlacementBearer, map[string]string{"product_ref": "product_id"}, nil, productOutput),
+				verifiedProviderGET("commerce.product.get", "tiktok_shop", "fetch_product_detail_api_v1_tiktok_shop_web_fetch_product_detail_get", "/api/v1/tiktok/shop/web/fetch_product_detail", map[string]string{"product_ref": "product_id"}, map[string]any{"region": "US"}, productOutput, 1_000),
 				providerGET("commerce.product.get", "xiaohongshu", "get_product_detail_api_v1_xiaohongshu_app_v2_get_product_detail_get", "/api/v1/xiaohongshu/app_v2/get_product_detail", "tikhub.direct.v1", AuthPlacementBearer, map[string]string{"product_ref": "sku_id"}, nil, productOutput),
 			},
 		},
@@ -245,7 +242,7 @@ func standardCapabilityRegistry() []standardCapabilityDefinition {
 			}, []any{"platform", "product_ref"}),
 			OutputSchema: reviewListOutput,
 			Bindings: []ProviderOperation{
-				providerGET("commerce.product.reviews.list", "tiktok_shop", "fetch_product_reviews_api_v1_tiktok_shop_web_fetch_product_reviews_get", "/api/v1/tiktok/shop/web/fetch_product_reviews", "tikhub.direct.v1", AuthPlacementBearer, map[string]string{"product_ref": "product_id"}, map[string]any{"page_start": 1, "page_size": 10}, reviewListOutput),
+				verifiedProviderGET("commerce.product.reviews.list", "tiktok_shop", "fetch_product_reviews_v2_api_v1_tiktok_shop_web_fetch_product_reviews_v2_get", "/api/v1/tiktok/shop/web/fetch_product_reviews_v2", map[string]string{"product_ref": "product_id"}, map[string]any{"page_start": 1, "sort_rule": 2, "filter_type": 1, "filter_value": 6, "region": "US"}, reviewListOutput, 1_000),
 			},
 		},
 	}
@@ -262,6 +259,14 @@ func providerGET(operationKey, platform, operationID, path, mappingKey, authPlac
 		MappingKey: mappingKey, MappingVersion: "v1", ParameterMap: parameterMap, FixedParams: fixedParams,
 		OutputSchema: outputSchema, CostCurrency: costCurrency,
 	}
+}
+
+func verifiedProviderGET(operationKey, platform, operationID, path string, parameterMap map[string]string, fixedParams map[string]any, outputSchema map[string]any, costAmountMicros int64) ProviderOperation {
+	operation := providerGET(operationKey, platform, operationID, path, tikHubDirectMappingKey, AuthPlacementBearer, parameterMap, fixedParams, outputSchema)
+	operation.CostAmountMicros = costAmountMicros
+	operation.ContractEquivalent = true
+	operation.BillingReady = true
+	return operation
 }
 
 func providerPOST(operationKey, platform, operationID, path string, parameterMap map[string]string, fixedParams map[string]any, outputSchema map[string]any) ProviderOperation {
