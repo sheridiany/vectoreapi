@@ -14,7 +14,6 @@ func registerSearchRoutes(apiRouter *gin.RouterGroup, anonymousRequestBodyLimit 
 	{
 		searchAgentKeyRoute.GET("", controller.GetSearchAgentKeys)
 		searchAgentKeyRoute.POST("", middleware.CriticalRateLimit(), middleware.DisableCache(), controller.CreateSearchAgentKey)
-		searchAgentKeyRoute.POST("/:id/install-token", middleware.CriticalRateLimit(), middleware.DisableCache(), controller.CreateSearchAgentKeyInstallToken)
 		searchAgentKeyRoute.DELETE("/:id", middleware.CriticalRateLimit(), middleware.DisableCache(), controller.RevokeSearchAgentKey)
 	}
 
@@ -34,7 +33,6 @@ func registerSearchRoutes(apiRouter *gin.RouterGroup, anonymousRequestBodyLimit 
 	{
 		searchManagedAgentKeyRoute.GET("", controller.AdminGetSearchAgentKeys)
 		searchManagedAgentKeyRoute.POST("", middleware.CriticalRateLimit(), middleware.DisableCache(), controller.AdminCreateSearchAgentKey)
-		searchManagedAgentKeyRoute.POST("/:id/install-token", middleware.CriticalRateLimit(), middleware.DisableCache(), controller.AdminCreateSearchAgentKeyInstallToken)
 		searchManagedAgentKeyRoute.DELETE("/:id", middleware.CriticalRateLimit(), middleware.DisableCache(), controller.AdminRevokeSearchAgentKey)
 	}
 
@@ -58,6 +56,4 @@ func registerSearchRoutes(apiRouter *gin.RouterGroup, anonymousRequestBodyLimit 
 		searchAdminRoute.POST("/usage-logs/:id/reconcile", middleware.CriticalRateLimit(), middleware.DisableCache(), controller.AdminReconcileSearchUsage)
 	}
 
-	apiRouter.POST("/agent/install", middleware.CriticalRateLimit(), middleware.DisableCache(), anonymousRequestBodyLimit, controller.InstallSearchAgent)
-	apiRouter.POST("/agent/install/activate", middleware.CriticalRateLimit(), middleware.DisableCache(), anonymousRequestBodyLimit, controller.ActivateSearchAgentInstall)
 }

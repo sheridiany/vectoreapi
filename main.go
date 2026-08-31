@@ -51,6 +51,9 @@ var vSearchInstallSh []byte
 //go:embed public/install.ps1
 var vSearchInstallPs1 []byte
 
+//go:embed public/install.mjs
+var vSearchInstallMjs []byte
+
 func main() {
 	startTime := time.Now()
 	kitutil.SetLogging(common.SysLog, func(message string) {
@@ -206,6 +209,7 @@ func main() {
 		IndexPage:  indexPage,
 		InstallSh:  vSearchInstallSh,
 		InstallPs1: vSearchInstallPs1,
+		InstallMjs: vSearchInstallMjs,
 	})
 	var port = os.Getenv("PORT")
 	if port == "" {

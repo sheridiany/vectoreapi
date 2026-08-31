@@ -45,7 +45,6 @@ import { handleServerError } from '@/lib/handle-server-error'
 
 import {
   createSearchAgentKey,
-  createSearchInstallToken,
   fetchSearchAgentKeys,
   revokeSearchAgentKey,
   type SearchAgentKeyApiRecord,
@@ -69,8 +68,6 @@ export function SearchKeysPage() {
   const [createdSecret, setCreatedSecret] = useState<string | null>(null)
   const [revokeKeyId, setRevokeKeyId] = useState<number | null>(null)
   const [installCommand, setInstallCommand] = useState('')
-  const [installKeyId, setInstallKeyId] = useState<number | null>(null)
-  const [installKeyLabel, setInstallKeyLabel] = useState('')
   const [installPlatform, setInstallPlatform] = useState<
     'macOS / Linux' | 'Windows PowerShell'
   >('macOS / Linux')
@@ -92,6 +89,7 @@ export function SearchKeysPage() {
     onSuccess: (created) => {
       setCreatedKeyId(created.id)
       setCreatedSecret(created.secret)
+      setInstallCommand('')
       form.reset()
       void queryClient.invalidateQueries({ queryKey: ['search-agent-keys'] })
     },
@@ -99,45 +97,24 @@ export function SearchKeysPage() {
   })
   const revokeMutation = useMutation({
     mutationFn: revokeSearchAgentKey,
-    onSuccess: (_, revokedId) => {
+    onSuccess: () => {
       setRevokeKeyId(null)
-      if (installKeyId === revokedId) {
-        setInstallCommand('')
-        setInstallKeyId(null)
-        setInstallKeyLabel('')
-      }
       void queryClient.invalidateQueries({ queryKey: ['search-agent-keys'] })
     },
     onError: handleServerError,
   })
-  const installMutation = useMutation({
-    mutationFn: async (input: {
-      keyId: number
-      keyLabel: string
-      platform: 'macOS / Linux' | 'Windows PowerShell'
-    }) => ({
-      keyLabel: input.keyLabel,
-      platform: input.platform,
-      token: await createSearchInstallToken(input.keyId),
-    }),
-    onMutate: () => {
-      setInstallCommand('')
-      setInstallKeyId(null)
-      setInstallKeyLabel('')
-    },
-    onSuccess: ({ keyLabel, platform, token }, input) => {
-      const origin = window.location.origin.replace(/\/$/, '')
-      setInstallKeyId(input.keyId)
-      setInstallKeyLabel(keyLabel)
-      setInstallPlatform(platform)
-      setInstallCommand(
-        platform === 'macOS / Linux'
-          ? `curl -fsSL '${origin}/install.sh' | bash -s -- --token '${token.token}' --origin '${origin}'`
-          : `& ([scriptblock]::Create((Invoke-RestMethod '${origin}/install.ps1'))) -Token '${token.token}' -Origin '${origin}'`
-      )
-    },
-    onError: handleServerError,
-  })
+  const buildInstallCommand = (
+    platform: 'macOS / Linux' | 'Windows PowerShell'
+  ) => {
+    if (!createdSecret) return
+    const origin = window.location.origin.replace(/\/$/, '')
+    setInstallPlatform(platform)
+    setInstallCommand(
+      platform === 'macOS / Linux'
+        ? `curl -fsSL '${origin}/install.sh' | bash -s -- --key '${createdSecret}' --origin '${origin}'`
+        : `& ([scriptblock]::Create((Invoke-RestMethod '${origin}/install.ps1'))) -Key '${createdSecret}' -Origin '${origin}'`
+    )
+  }
   const scopes = form.watch('scopes')
 
   const scopeLabels = useMemo<Map<string, string>>(
@@ -149,9 +126,7 @@ export function SearchKeysPage() {
   )
 
   const keys = keysQuery.data || []
-  const showInstallCommand =
-    installCommand !== '' &&
-    keys.some((key) => key.id === installKeyId && key.status === 'active')
+  const showInstallCommand = installCommand !== '' && createdSecret !== null
 
   let keyList: ReactNode
   if (keysQuery.isLoading) {
@@ -201,38 +176,6 @@ export function SearchKeysPage() {
               </p>
             </div>
             <div className='flex flex-wrap gap-2'>
-              {key.status === 'active' && (
-                <>
-                  <Button
-                    variant='outline'
-                    size='sm'
-                    onClick={() =>
-                      installMutation.mutate({
-                        keyId: key.id,
-                        keyLabel: key.label,
-                        platform: 'macOS / Linux',
-                      })
-                    }
-                    disabled={installMutation.isPending}
-                  >
-                    {t('macOS / Linux')}
-                  </Button>
-                  <Button
-                    variant='outline'
-                    size='sm'
-                    onClick={() =>
-                      installMutation.mutate({
-                        keyId: key.id,
-                        keyLabel: key.label,
-                        platform: 'Windows PowerShell',
-                      })
-                    }
-                    disabled={installMutation.isPending}
-                  >
-                    {t('Windows PowerShell')}
-                  </Button>
-                </>
-              )}
               {key.status !== 'revoked' && (
                 <Button
                   variant='outline'
@@ -376,6 +319,22 @@ export function SearchKeysPage() {
                   {t('Copy')}
                 </CopyButton>
               </div>
+              <div className='mt-3 flex flex-wrap gap-2'>
+                <Button
+                  variant='outline'
+                  size='sm'
+                  onClick={() => buildInstallCommand('macOS / Linux')}
+                >
+                  {t('macOS / Linux')}
+                </Button>
+                <Button
+                  variant='outline'
+                  size='sm'
+                  onClick={() => buildInstallCommand('Windows PowerShell')}
+                >
+                  {t('Windows PowerShell')}
+                </Button>
+              </div>
             </div>
           )}
         </CardContent>
@@ -396,14 +355,7 @@ export function SearchKeysPage() {
                 <div>
                   <p className='font-medium'>{t('Generate install command')}</p>
                   <p className='text-muted-foreground mt-1 text-xs'>
-                    {t(installPlatform)} ·{' '}
-                    {t(
-                      'The command expires in 15 minutes and can be used once.'
-                    )}
-                  </p>
-                  <p className='text-muted-foreground mt-1 text-xs'>
-                    <span>{t('Key name')}:</span>{' '}
-                    <span className='font-medium'>{installKeyLabel}</span>
+                    {t(installPlatform)} · {t('Uses the same vSearch key')}
                   </p>
                 </div>
                 <CopyButton
@@ -421,7 +373,7 @@ export function SearchKeysPage() {
               </pre>
               <p className='text-muted-foreground mt-3 text-xs leading-5'>
                 {t(
-                  'Running this command rotates this vSearch key in place. The previous key stops working immediately.'
+                  'The installer keeps this key unchanged and can be run again on another device.'
                 )}
               </p>
             </div>
