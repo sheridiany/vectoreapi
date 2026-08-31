@@ -35,7 +35,7 @@ type encryptedExecutionResult struct {
 func (runtime *ExecutionRuntime) Execute(ctx context.Context, principal Principal, command ExecuteCommand) (ExecutionResult, error) {
 	command.IdempotencyKey = strings.TrimSpace(command.IdempotencyKey)
 	if command.IdempotencyKey == "" {
-		return runtime.executeOnce(ctx, principal, command)
+		return runtime.executeOnce(ctx, principal, command, nil)
 	}
 	if utf8.RuneCountInString(command.IdempotencyKey) > MaxIdempotencyKeyCharacters {
 		return ExecutionResult{}, &PublicError{
@@ -85,17 +85,28 @@ func (runtime *ExecutionRuntime) Execute(ctx context.Context, principal Principa
 		return ExecutionResult{}, &PublicError{
 			Code: "IDEMPOTENCY_KEY_REUSED", Message: "该 Idempotency-Key 已用于不同请求。", HTTPStatus: http.StatusConflict,
 		}
+	case model.SearchExecutionIdempotencyResolved:
+		return ExecutionResult{}, &PublicError{
+			Code: "IDEMPOTENCY_REQUEST_RESOLVED", Message: "该请求已由管理员完成核对，不能自动重放。", HTTPStatus: http.StatusConflict,
+		}
 	case model.SearchExecutionIdempotencyAcquired:
 	default:
 		return ExecutionResult{}, idempotencyUnavailableError()
 	}
 
-	result, executeErr := runtime.executeOnce(ctx, principal, command)
+	result, executeErr := runtime.executeOnce(ctx, principal, command, record)
 	if executeErr != nil {
 		var dispatchedErr *executionDispatchedError
 		if errors.As(executeErr, &dispatchedErr) {
 			// The upstream may have accepted the request. Keep the reservation pending
-			// until expiry so a retry cannot trigger the tool a second time.
+			// so only explicit reconciliation can make this key reusable.
+			return ExecutionResult{}, executeErr
+		}
+		var knownOutcomeErr *executionKnownOutcomeError
+		if errors.As(executeErr, &knownOutcomeErr) {
+			if resolveErr := model.ResolveSearchExecutionIdempotencyByUsageRequestID(record.UsageRequestID); resolveErr != nil {
+				common.SysLog("failed to close vSearch idempotency key after known upstream outcome: " + resolveErr.Error())
+			}
 			return ExecutionResult{}, executeErr
 		}
 		if releaseErr := model.ReleaseSearchExecutionIdempotency(record.Id, requestHash, record.ClaimToken); releaseErr != nil {
@@ -106,14 +117,18 @@ func (runtime *ExecutionRuntime) Execute(ctx context.Context, principal Principa
 	encrypted, err := encryptExecutionResult(result)
 	if err != nil {
 		common.SysLog("failed to encrypt vSearch idempotency result: " + err.Error())
-		// The upstream call and billing already succeeded, so preserve that success while the pending row blocks duplicate charges.
+		if resolveErr := model.ResolveSearchExecutionIdempotencyByUsageRequestID(result.RequestID); resolveErr != nil {
+			common.SysLog("failed to close vSearch idempotency key after cache encryption failure: " + resolveErr.Error())
+		}
 		return result, nil
 	}
 	if err := model.CompleteSearchExecutionIdempotency(
 		record.Id, requestHash, record.ClaimToken, encrypted.Ciphertext, encrypted.Nonce, encrypted.Version,
 	); err != nil {
 		common.SysLog("failed to persist vSearch idempotency result: " + err.Error())
-		// Never turn a completed and charged execution into a client-visible failure.
+		if resolveErr := model.ResolveSearchExecutionIdempotencyByUsageRequestID(result.RequestID); resolveErr != nil {
+			common.SysLog("failed to close vSearch idempotency key after cache persistence failure: " + resolveErr.Error())
+		}
 		return result, nil
 	}
 	return result, nil

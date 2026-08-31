@@ -117,7 +117,7 @@ describe('vSearch key page', () => {
     await user.click(screen.getByRole('button', { name: 'Revoke key' }))
 
     expect(screen.getByRole('alertdialog')).toHaveTextContent(
-      'Revoke AgentKey?'
+      'Revoke vSearch key?'
     )
   })
 

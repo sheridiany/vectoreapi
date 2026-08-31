@@ -120,6 +120,9 @@ func PublishSearchCapabilities(configs []SearchCapabilityPublishConfig, clearGra
 			}
 			healthyRoute := false
 			for _, binding := range bindings {
+				if !IsSearchCapabilityBindingExecutable(capability.ContractVersion, &binding) {
+					continue
+				}
 				account, accountExists := accountsByID[binding.UpstreamAccountID]
 				pool, poolExists := poolsByID[account.PoolID]
 				if !accountExists || !poolExists || account.Status != SearchUpstreamAccountStatusHealthy || pool.Status != SearchUpstreamPoolStatusEnabled {

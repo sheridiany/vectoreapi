@@ -23,7 +23,7 @@ func TestListCatalogGroupsCountsDistinctToolsInsteadOfHealthyRoutes(t *testing.T
 		encrypted, err := EncryptUpstreamSecret("ak_live_" + name)
 		require.NoError(t, err)
 		account := &model.SearchUpstreamAccount{
-			PoolID: pool.Id, Name: name, BaseURL: DefaultAgentKeyMCPURL,
+			PoolID: pool.Id, Name: name, BaseURL: DefaultTikHubBaseURL,
 			SecretCiphertext: encrypted.Ciphertext, SecretNonce: encrypted.Nonce,
 			SecretVersion: encrypted.Version, SecretPrefix: UpstreamSecretPrefix("ak_live_" + name),
 			Status: model.SearchUpstreamAccountStatusHealthy,
@@ -91,6 +91,148 @@ func TestListCatalogGroupsCountsDistinctToolsInsteadOfHealthyRoutes(t *testing.T
 	assert.Equal(t, int64(1), groups[0].InterfaceCount, "unauthorized tools must not affect a group count")
 }
 
+func TestProductCatalogShowsCanonicalDraftWithDeclaredPlatformsWithoutMakingItExecutable(t *testing.T) {
+	openRuntimeTestDB(t)
+	pool := &model.SearchUpstreamPool{Name: "product-catalog"}
+	require.NoError(t, model.CreateSearchUpstreamPool(pool))
+	accounts := make([]*model.SearchUpstreamAccount, 0, 2)
+	for _, provider := range []string{model.SearchUpstreamProviderJustOneAPI, model.SearchUpstreamProviderTikHub} {
+		encrypted, err := EncryptUpstreamSecret("secret_" + provider)
+		require.NoError(t, err)
+		baseURL := DefaultTikHubBaseURL
+		if provider == model.SearchUpstreamProviderJustOneAPI {
+			baseURL = DefaultJustOneAPIBaseURL
+		}
+		account := &model.SearchUpstreamAccount{
+			PoolID: pool.Id, Name: provider + "-account", Provider: provider,
+			BaseURL: baseURL, SecretCiphertext: encrypted.Ciphertext,
+			SecretNonce: encrypted.Nonce, SecretVersion: encrypted.Version,
+			SecretPrefix: UpstreamSecretPrefix("secret_" + provider),
+			Status:       model.SearchUpstreamAccountStatusHealthy,
+		}
+		require.NoError(t, model.CreateSearchUpstreamAccount(account))
+		accounts = append(accounts, account)
+	}
+	publicID, err := model.GenerateSearchCapabilityPublicID("social.account.get@v1")
+	require.NoError(t, err)
+	capability := &model.SearchCapability{
+		PublicID: publicID, OperationKey: "social.account.get", ContractVersion: "v1",
+		Name: "社交账号详情", Category: "社交媒体", Description: "按平台获取标准化账号资料。",
+		InputSchema: `{"type":"object"}`, OutputSchema: `{"type":"object"}`,
+		Status: model.SearchCapabilityStatusDisabled, PriceMicros: 500_000,
+	}
+	require.NoError(t, model.CreateSearchCapability(capability))
+	for index, platform := range []string{"instagram", "tiktok"} {
+		require.NoError(t, model.UpsertSearchCapabilityBinding(&model.SearchCapabilityBinding{
+			CapabilityID: capability.Id, UpstreamAccountID: accounts[index].Id,
+			ToolName: "private-provider-operation-" + platform, Platform: platform,
+			ProviderOperationID: "private-provider-operation-" + platform,
+			MappingKey:          []string{justOneAPIDirectMappingKey, tikHubDirectMappingKey}[index],
+			InputSchema:         capability.InputSchema, OutputSchema: capability.OutputSchema,
+			Status: model.SearchCapabilityBindingStatusEnabled,
+		}))
+	}
+	require.NoError(t, model.ReplaceSearchCapabilityGrants(capability.Id, []model.SearchCapabilityGrant{{EnterpriseID: 12}}))
+
+	runtime := NewExecutionRuntime(nil)
+	unauthorized, err := runtime.ListCatalogGroups(context.Background(), Principal{EnterpriseID: 11})
+	require.NoError(t, err)
+	assert.Empty(t, unauthorized)
+	wrongCategory, err := runtime.ListCatalogGroups(context.Background(), Principal{EnterpriseID: 12, Scopes: []string{"finance"}})
+	require.NoError(t, err)
+	assert.Empty(t, wrongCategory)
+
+	userCatalog, err := runtime.ListCatalogGroups(context.Background(), Principal{EnterpriseID: 12})
+	require.NoError(t, err)
+	require.Len(t, userCatalog, 1)
+	assert.Equal(t, "社交账号详情", userCatalog[0].Name)
+	assert.Equal(t, "catalog", userCatalog[0].Status)
+	assert.False(t, userCatalog[0].Enabled)
+	assert.Equal(t, int64(2), userCatalog[0].InterfaceCount)
+	assert.Zero(t, userCatalog[0].AvailableInterfaceCount)
+	assert.Equal(t, []string{"instagram", "tiktok"}, userCatalog[0].SupportedPlatforms)
+	assert.Empty(t, userCatalog[0].CostLabel, "draft upstream cost must not be presented as a user price")
+	assert.Zero(t, userCatalog[0].PriceMinMicros)
+	assert.Zero(t, userCatalog[0].PriceMaxMicros)
+
+	publicCatalog, err := runtime.ListPublicCatalog(context.Background())
+	require.NoError(t, err)
+	require.Len(t, publicCatalog, 1)
+	payload, err := common.Marshal(publicCatalog)
+	require.NoError(t, err)
+	assert.NotContains(t, string(payload), "private-provider-operation")
+	assert.NotContains(t, string(payload), "JustOneAPI-account")
+	assert.NotContains(t, string(payload), "input_schema")
+	assert.NotContains(t, string(payload), "upstream_cost")
+
+	discovery, err := runtime.Discover(context.Background(), Principal{EnterpriseID: 12}, "社交账号")
+	require.NoError(t, err)
+	assert.Empty(t, discovery.Tools, "draft product entries must remain unavailable to execution discovery")
+}
+
+func TestProductCatalogCountsOnlyExecutableNonJustOneAPIInterfaces(t *testing.T) {
+	openRuntimeTestDB(t)
+	pool := &model.SearchUpstreamPool{Name: "product-availability"}
+	require.NoError(t, model.CreateSearchUpstreamPool(pool))
+	capabilityID, err := model.GenerateSearchCapabilityPublicID("social.content.search@v1")
+	require.NoError(t, err)
+	capability := &model.SearchCapability{
+		PublicID: capabilityID, OperationKey: "social.content.search", ContractVersion: "v1",
+		Name: "社交内容搜索", Category: "社交媒体", Description: "按平台搜索公开内容。",
+		InputSchema: `{"type":"object"}`, OutputSchema: `{"type":"object"}`,
+		Status: model.SearchCapabilityStatusEnabled, PriceMicros: 300_000,
+	}
+	require.NoError(t, model.CreateSearchCapability(capability))
+	for index, provider := range []string{model.SearchUpstreamProviderJustOneAPI, model.SearchUpstreamProviderTikHub} {
+		encrypted, encryptErr := EncryptUpstreamSecret("secret_" + provider)
+		require.NoError(t, encryptErr)
+		baseURL := DefaultTikHubBaseURL
+		if provider == model.SearchUpstreamProviderJustOneAPI {
+			baseURL = DefaultJustOneAPIBaseURL
+		}
+		account := &model.SearchUpstreamAccount{
+			PoolID: pool.Id, Name: provider + "-available", Provider: provider, BaseURL: baseURL,
+			SecretCiphertext: encrypted.Ciphertext, SecretNonce: encrypted.Nonce,
+			SecretVersion: encrypted.Version, SecretPrefix: UpstreamSecretPrefix("secret_" + provider),
+			Status: model.SearchUpstreamAccountStatusHealthy,
+		}
+		require.NoError(t, model.CreateSearchUpstreamAccount(account))
+		platform := []string{"douyin", "tiktok"}[index]
+		require.NoError(t, model.UpsertSearchCapabilityBinding(&model.SearchCapabilityBinding{
+			CapabilityID: capability.Id, UpstreamAccountID: account.Id,
+			ToolName: "provider-operation-" + platform, Platform: platform,
+			ProviderOperationID: "provider-operation-" + platform,
+			MappingKey:          []string{justOneAPIDirectMappingKey, tikHubDirectMappingKey}[index],
+			InputSchema:         capability.InputSchema, OutputSchema: capability.OutputSchema,
+			CostCurrency: "CNY", ContractEquivalent: true, BillingReady: true,
+			Status: model.SearchCapabilityBindingStatusEnabled, UpstreamCostMicros: 100_000,
+		}))
+	}
+
+	runtime := NewExecutionRuntime(nil)
+	catalog, err := runtime.ListCatalogGroups(context.Background(), Principal{EnterpriseID: 12})
+	require.NoError(t, err)
+	require.Len(t, catalog, 1)
+	assert.Equal(t, "available", catalog[0].Status)
+	assert.Equal(t, int64(2), catalog[0].InterfaceCount)
+	assert.Equal(t, int64(1), catalog[0].AvailableInterfaceCount)
+	assert.Equal(t, []string{"douyin", "tiktok"}, catalog[0].SupportedPlatforms)
+
+	require.NoError(t, model.DB.Model(&model.SearchCapabilityBinding{}).
+		Where("mapping_key = ?", tikHubDirectMappingKey).
+		Update("status", model.SearchCapabilityBindingStatusDisabled).Error)
+	catalog, err = runtime.ListCatalogGroups(context.Background(), Principal{EnterpriseID: 12})
+	require.NoError(t, err)
+	require.Len(t, catalog, 1)
+	assert.Equal(t, "unavailable", catalog[0].Status)
+	assert.Equal(t, int64(1), catalog[0].InterfaceCount, "retired bindings are not declared interfaces")
+	assert.Zero(t, catalog[0].AvailableInterfaceCount)
+	_, err = runtime.Describe(context.Background(), Principal{EnterpriseID: 12}, capability.PublicID)
+	var publicErr *PublicError
+	require.ErrorAs(t, err, &publicErr)
+	assert.Equal(t, "CAPABILITY_UNAVAILABLE", publicErr.Code, "JustOneAPI must remain outside execution routing")
+}
+
 func TestCatalogGroupIdentitySplitsBrokerPlatforms(t *testing.T) {
 	youtubeFromTikHub, _ := catalogGroupFromToolName("TikHub/get_video_info_api_v1_youtube_web_get")
 	youtubeFromJustOneAPI, _ := catalogGroupFromToolName("JustOneAPI/getApiYoutubeSearchV1")
@@ -115,7 +257,7 @@ func TestListCatalogGroupsUsesBoundedQueries(t *testing.T) {
 	encrypted, err := EncryptUpstreamSecret("ak_live_catalog_query_count")
 	require.NoError(t, err)
 	account := &model.SearchUpstreamAccount{
-		PoolID: pool.Id, Name: "catalog-query-count", BaseURL: DefaultAgentKeyMCPURL,
+		PoolID: pool.Id, Name: "catalog-query-count", BaseURL: DefaultTikHubBaseURL,
 		SecretCiphertext: encrypted.Ciphertext, SecretNonce: encrypted.Nonce,
 		SecretVersion: encrypted.Version, SecretPrefix: UpstreamSecretPrefix("ak_live_catalog_query_count"),
 		Status: model.SearchUpstreamAccountStatusHealthy,

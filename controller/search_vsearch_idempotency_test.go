@@ -97,6 +97,7 @@ func TestExecuteSearchCapabilityReturnsHTTP409ForReusedIdempotencyKey(t *testing
 	invalidParamsContext.Set("enterprise_id", key.EnterpriseID)
 	invalidParamsContext.Request = httptest.NewRequest(http.MethodPost, "/api/search/execute", bytes.NewBufferString(`{"service_id":"vr_svc_0123456789abcdef","params":{"query":42}}`))
 	invalidParamsContext.Request.Header.Set("Content-Type", "application/json")
+	invalidParamsContext.Request.Header.Set("Idempotency-Key", "invalid-params-request")
 
 	ExecuteSearchCapability(invalidParamsContext)
 
@@ -104,4 +105,18 @@ func TestExecuteSearchCapabilityReturnsHTTP409ForReusedIdempotencyKey(t *testing
 	require.NoError(t, common.Unmarshal(invalidParamsRecorder.Body.Bytes(), &payload))
 	assert.False(t, payload.Success)
 	assert.Equal(t, "INVALID_TOOL_PARAMS", payload.Code)
+
+	missingKeyRecorder := httptest.NewRecorder()
+	missingKeyContext, _ := gin.CreateTestContext(missingKeyRecorder)
+	missingKeyContext.Set("id", key.UserId)
+	missingKeyContext.Set("enterprise_id", key.EnterpriseID)
+	missingKeyContext.Request = httptest.NewRequest(http.MethodPost, "/api/search/execute", bytes.NewBufferString(`{"service_id":"vr_svc_0123456789abcdef","params":{"query":"news"}}`))
+	missingKeyContext.Request.Header.Set("Content-Type", "application/json")
+
+	ExecuteSearchCapability(missingKeyContext)
+
+	require.Equal(t, http.StatusBadRequest, missingKeyRecorder.Code)
+	require.NoError(t, common.Unmarshal(missingKeyRecorder.Body.Bytes(), &payload))
+	assert.False(t, payload.Success)
+	assert.Equal(t, "IDEMPOTENCY_KEY_REQUIRED", payload.Code)
 }

@@ -34,10 +34,13 @@ const (
 type SearchCapability struct {
 	Id                 int            `json:"id"`
 	PublicID           string         `json:"public_id" gorm:"size:32;not null;uniqueIndex"`
+	OperationKey       string         `json:"operation_key" gorm:"size:128;index"`
+	ContractVersion    string         `json:"contract_version" gorm:"size:32"`
 	Name               string         `json:"name" gorm:"size:128;not null;index"`
 	Category           string         `json:"category" gorm:"size:64;not null;index"`
 	Description        string         `json:"description" gorm:"type:text"`
 	InputSchema        string         `json:"input_schema,omitempty" gorm:"type:text"`
+	OutputSchema       string         `json:"output_schema,omitempty" gorm:"type:text"`
 	SchemaStatus       int            `json:"schema_status" gorm:"type:int;not null"`
 	Status             int            `json:"status" gorm:"type:int;not null;index"`
 	AvailabilitySource int            `json:"-" gorm:"type:int;not null;default:0"`
@@ -50,18 +53,31 @@ type SearchCapability struct {
 }
 
 type SearchCapabilityBinding struct {
-	Id                 int    `json:"id"`
-	CapabilityID       int    `json:"capability_id" gorm:"not null;uniqueIndex:idx_search_capability_binding,priority:1;index"`
-	UpstreamAccountID  int    `json:"upstream_account_id" gorm:"not null;uniqueIndex:idx_search_capability_binding,priority:2;index"`
-	ToolName           string `json:"-" gorm:"size:191;not null;uniqueIndex:idx_search_capability_binding,priority:3"`
-	InputSchema        string `json:"-" gorm:"type:text"`
-	Status             int    `json:"status" gorm:"type:int;not null;index"`
-	Weight             int    `json:"weight" gorm:"type:int;not null"`
-	Priority           int    `json:"priority" gorm:"type:int;not null"`
-	UpstreamCostMicros int64  `json:"upstream_cost_micros" gorm:"not null"`
-	LastSyncedAt       int64  `json:"last_synced_at" gorm:"index"`
-	CreatedAt          int64  `json:"created_at" gorm:"autoCreateTime;index"`
-	UpdatedAt          int64  `json:"updated_at" gorm:"autoUpdateTime"`
+	Id                  int    `json:"id"`
+	CapabilityID        int    `json:"capability_id" gorm:"not null;uniqueIndex:idx_search_capability_binding,priority:1;index"`
+	UpstreamAccountID   int    `json:"upstream_account_id" gorm:"not null;uniqueIndex:idx_search_capability_binding,priority:2;index"`
+	ToolName            string `json:"-" gorm:"size:191;not null;uniqueIndex:idx_search_capability_binding,priority:3"`
+	Platform            string `json:"platform" gorm:"size:32;index"`
+	ProviderOperationID string `json:"provider_operation_id" gorm:"size:191"`
+	HTTPMethod          string `json:"http_method" gorm:"size:8"`
+	UpstreamPath        string `json:"upstream_path" gorm:"size:512"`
+	AuthPlacement       string `json:"auth_placement" gorm:"size:16"`
+	MappingKey          string `json:"mapping_key" gorm:"size:64"`
+	MappingVersion      string `json:"mapping_version" gorm:"size:32"`
+	ParameterMap        string `json:"-" gorm:"type:text"`
+	FixedParams         string `json:"-" gorm:"type:text"`
+	InputSchema         string `json:"-" gorm:"type:text"`
+	OutputSchema        string `json:"-" gorm:"type:text"`
+	CostCurrency        string `json:"cost_currency" gorm:"size:8"`
+	ContractEquivalent  bool   `json:"contract_equivalent"`
+	BillingReady        bool   `json:"billing_ready"`
+	Status              int    `json:"status" gorm:"type:int;not null;index"`
+	Weight              int    `json:"weight" gorm:"type:int;not null"`
+	Priority            int    `json:"priority" gorm:"type:int;not null"`
+	UpstreamCostMicros  int64  `json:"upstream_cost_micros" gorm:"not null"`
+	LastSyncedAt        int64  `json:"last_synced_at" gorm:"index"`
+	CreatedAt           int64  `json:"created_at" gorm:"autoCreateTime;index"`
+	UpdatedAt           int64  `json:"updated_at" gorm:"autoUpdateTime"`
 }
 
 type SearchCapabilityGrant struct {
@@ -88,12 +104,24 @@ func normalizeSearchCapability(capability *SearchCapability) error {
 		return errors.New("search capability is required")
 	}
 	capability.PublicID = strings.TrimSpace(capability.PublicID)
+	capability.OperationKey = strings.TrimSpace(capability.OperationKey)
+	capability.ContractVersion = strings.TrimSpace(capability.ContractVersion)
 	capability.Name = strings.TrimSpace(capability.Name)
 	capability.Category = strings.TrimSpace(capability.Category)
 	capability.Description = strings.TrimSpace(capability.Description)
 	capability.InputSchema = strings.TrimSpace(capability.InputSchema)
+	capability.OutputSchema = strings.TrimSpace(capability.OutputSchema)
 	if capability.PublicID == "" || len(capability.PublicID) > 32 || !strings.HasPrefix(capability.PublicID, "vr_svc_") {
 		return errors.New("search capability public id is invalid")
+	}
+	if capability.OperationKey == "" {
+		capability.OperationKey = capability.PublicID
+	}
+	if capability.ContractVersion == "" {
+		capability.ContractVersion = "legacy-v1"
+	}
+	if len(capability.OperationKey) > 128 || len(capability.ContractVersion) > 32 {
+		return errors.New("search capability contract identity is invalid")
 	}
 	if capability.Name == "" || len([]rune(capability.Name)) > 128 {
 		return errors.New("search capability name must be between 1 and 128 characters")
@@ -141,9 +169,29 @@ func normalizeSearchCapabilityBinding(binding *SearchCapabilityBinding) error {
 		return errors.New("search capability binding identity is invalid")
 	}
 	binding.ToolName = strings.TrimSpace(binding.ToolName)
+	binding.Platform = strings.TrimSpace(binding.Platform)
+	binding.ProviderOperationID = strings.TrimSpace(binding.ProviderOperationID)
+	binding.HTTPMethod = strings.ToUpper(strings.TrimSpace(binding.HTTPMethod))
+	binding.UpstreamPath = strings.TrimSpace(binding.UpstreamPath)
+	binding.AuthPlacement = strings.TrimSpace(binding.AuthPlacement)
+	binding.MappingKey = strings.TrimSpace(binding.MappingKey)
+	binding.MappingVersion = strings.TrimSpace(binding.MappingVersion)
+	binding.ParameterMap = strings.TrimSpace(binding.ParameterMap)
+	binding.FixedParams = strings.TrimSpace(binding.FixedParams)
 	binding.InputSchema = strings.TrimSpace(binding.InputSchema)
+	binding.OutputSchema = strings.TrimSpace(binding.OutputSchema)
+	binding.CostCurrency = strings.ToUpper(strings.TrimSpace(binding.CostCurrency))
+	if binding.ProviderOperationID == "" {
+		binding.ProviderOperationID = binding.ToolName
+	}
+	if binding.ToolName == "" {
+		binding.ToolName = binding.ProviderOperationID
+	}
 	if binding.ToolName == "" || len(binding.ToolName) > 191 {
 		return errors.New("search capability binding tool name is invalid")
+	}
+	if len(binding.Platform) > 32 || len(binding.ProviderOperationID) > 191 || len(binding.HTTPMethod) > 8 || len(binding.UpstreamPath) > 512 || len(binding.AuthPlacement) > 16 || len(binding.MappingKey) > 64 || len(binding.MappingVersion) > 32 || len(binding.CostCurrency) > 8 {
+		return errors.New("search capability binding contract is invalid")
 	}
 	if binding.UpstreamCostMicros < 0 || binding.Priority < 0 {
 		return errors.New("search capability binding numeric value is invalid")
@@ -166,6 +214,16 @@ func normalizeSearchCapabilityBinding(binding *SearchCapabilityBinding) error {
 	return nil
 }
 
+func IsSearchCapabilityBindingExecutable(contractVersion string, binding *SearchCapabilityBinding) bool {
+	if binding == nil {
+		return false
+	}
+	if strings.TrimSpace(contractVersion) == "legacy-v1" {
+		return true
+	}
+	return binding.ContractEquivalent && binding.BillingReady && binding.CostCurrency == "CNY"
+}
+
 func CreateSearchCapability(capability *SearchCapability) error {
 	if err := normalizeSearchCapability(capability); err != nil {
 		return err
@@ -180,7 +238,7 @@ func UpsertDiscoveredSearchCapability(capability *SearchCapability) error {
 	return DB.Clauses(clause.OnConflict{
 		Columns: []clause.Column{{Name: "public_id"}},
 		DoUpdates: clause.AssignmentColumns([]string{
-			"name", "category", "description", "input_schema", "schema_status",
+			"operation_key", "contract_version", "name", "category", "description", "input_schema", "output_schema", "schema_status",
 			"upstream_cost_micros", "last_synced_at", "updated_at",
 		}),
 	}).Create(capability).Error
@@ -323,9 +381,55 @@ func UpsertSearchCapabilityBinding(binding *SearchCapabilityBinding) error {
 	return DB.Clauses(clause.OnConflict{
 		Columns: []clause.Column{{Name: "capability_id"}, {Name: "upstream_account_id"}, {Name: "tool_name"}},
 		DoUpdates: clause.AssignmentColumns([]string{
-			"input_schema", "status", "weight", "priority", "upstream_cost_micros", "last_synced_at", "updated_at",
+			"platform", "provider_operation_id", "http_method", "upstream_path", "auth_placement", "mapping_key", "mapping_version",
+			"parameter_map", "fixed_params", "input_schema", "output_schema", "cost_currency", "contract_equivalent", "billing_ready",
+			"status", "weight", "priority", "upstream_cost_micros", "last_synced_at", "updated_at",
 		}),
 	}).Create(binding).Error
+}
+
+type SearchCapabilityBindingIdentity struct {
+	CapabilityID        int
+	ProviderOperationID string
+	Platform            string
+}
+
+func DisableStaleSearchCapabilityBindings(accountID int, mappingKey string, expectedBindings []SearchCapabilityBindingIdentity) error {
+	if accountID <= 0 || strings.TrimSpace(mappingKey) == "" {
+		return errors.New("search capability binding scope is invalid")
+	}
+	expected := make(map[SearchCapabilityBindingIdentity]struct{}, len(expectedBindings))
+	for _, identity := range expectedBindings {
+		identity.ProviderOperationID = strings.TrimSpace(identity.ProviderOperationID)
+		identity.Platform = strings.TrimSpace(identity.Platform)
+		if identity.CapabilityID <= 0 || identity.ProviderOperationID == "" {
+			return errors.New("search capability binding identity is invalid")
+		}
+		expected[identity] = struct{}{}
+	}
+	bindings := make([]SearchCapabilityBinding, 0)
+	if err := DB.Where(
+		"upstream_account_id = ? AND mapping_key = ? AND status = ?",
+		accountID, strings.TrimSpace(mappingKey), SearchCapabilityBindingStatusEnabled,
+	).Find(&bindings).Error; err != nil {
+		return err
+	}
+	staleIDs := make([]int, 0)
+	for _, binding := range bindings {
+		identity := SearchCapabilityBindingIdentity{
+			CapabilityID: binding.CapabilityID, ProviderOperationID: binding.ProviderOperationID, Platform: binding.Platform,
+		}
+		if _, keep := expected[identity]; !keep {
+			staleIDs = append(staleIDs, binding.Id)
+		}
+	}
+	if len(staleIDs) == 0 {
+		return nil
+	}
+	return DB.Model(&SearchCapabilityBinding{}).Where("id IN ?", staleIDs).Updates(map[string]any{
+		"status":     SearchCapabilityBindingStatusDisabled,
+		"updated_at": common.GetTimestamp(),
+	}).Error
 }
 
 func ListSearchCapabilityBindings(capabilityID int, enabledOnly bool) ([]*SearchCapabilityBinding, error) {

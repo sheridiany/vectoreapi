@@ -50,7 +50,7 @@ func SearchAgentKeyAuth() gin.HandlerFunc {
 		c.Set("enterprise_id", key.EnterpriseID)
 		c.Set("search_agent_key_id", key.Id)
 		if err := model.TouchSearchAgentKey(key.Id); err != nil {
-			common.SysLog("failed to update vSearch AgentKey last-used time: " + err.Error())
+			common.SysLog("failed to update vSearch key last-used time: " + err.Error())
 		}
 		c.Next()
 	}
@@ -68,7 +68,7 @@ func writeSearchAgentAuthError(c *gin.Context, status int, message string) {
 }
 
 // SearchAdminAuth allows root users and active enterprise owners/admins to
-// manage AgentKeys without granting access to model administration.
+// manage vSearch keys without granting access to model administration.
 func SearchAdminAuth() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if c.GetInt("role") >= common.RoleRootUser {

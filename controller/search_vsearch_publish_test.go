@@ -45,8 +45,8 @@ func TestAdminPublishSearchCatalogPublishesRequestedCapabilitiesGlobally(t *test
 	pool := &model.SearchUpstreamPool{Name: "default"}
 	require.NoError(t, model.CreateSearchUpstreamPool(pool))
 	account := &model.SearchUpstreamAccount{
-		PoolID: pool.Id, Provider: model.SearchUpstreamProviderAgentKeyMCP, Name: "primary",
-		BaseURL: vsearch.DefaultAgentKeyMCPURL, SecretCiphertext: "fixture", SecretNonce: "fixture",
+		PoolID: pool.Id, Provider: model.SearchUpstreamProviderTikHub, Name: "primary",
+		BaseURL: vsearch.DefaultTikHubBaseURL, SecretCiphertext: "fixture", SecretNonce: "fixture",
 		SecretVersion: 1, SecretPrefix: "fixture", Weight: 1,
 		Status: model.SearchUpstreamAccountStatusHealthy,
 	}

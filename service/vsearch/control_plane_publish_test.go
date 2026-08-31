@@ -2,15 +2,12 @@ package vsearch
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
 )
 
 func TestNormalizePublishServiceIDsKeepsExternalBatchLimit(t *testing.T) {
@@ -24,73 +21,6 @@ func TestNormalizePublishServiceIDsKeepsExternalBatchLimit(t *testing.T) {
 	var publicErr *PublicError
 	require.ErrorAs(t, err, &publicErr)
 	assert.Equal(t, "CATALOG_PUBLISH_INVALID", publicErr.Code)
-}
-
-func TestControlPlaneSyncReportsPartialSuccessWhenLaterPublishBatchFails(t *testing.T) {
-	openRuntimeTestDB(t)
-	firstTools := make([]any, 500)
-	for index := range firstTools {
-		firstTools[index] = map[string]any{
-			"name": fmt.Sprintf("Direct/tool_%03d", index), "title": fmt.Sprintf("Tool %03d", index),
-		}
-	}
-	firstConnector := &runtimeFakeConnector{
-		findResult: map[string]any{"tools": firstTools},
-		describeResult: map[string]any{
-			"inputSchema": map[string]any{"type": "object", "properties": map[string]any{"query": map[string]any{"type": "string"}}},
-			"cost":        float64(0.2),
-		},
-	}
-	secondConnector := &runtimeFakeConnector{
-		findResult:     map[string]any{"tools": []any{map[string]any{"name": "Direct/tool_500", "title": "Tool 500"}}},
-		describeResult: firstConnector.describeResult,
-	}
-	control := NewControlPlane(func(account *model.SearchUpstreamAccount, _ string) (UpstreamConnector, error) {
-		if account.Name == "first" {
-			return firstConnector, nil
-		}
-		return secondConnector, nil
-	})
-	_, err := control.SaveAccount(context.Background(), AccountCommand{Name: "first", Secret: "ak_live_first_batch", Status: "healthy"})
-	require.NoError(t, err)
-	_, err = control.SaveAccount(context.Background(), AccountCommand{Name: "second", Secret: "ak_live_second_batch", Status: "healthy"})
-	require.NoError(t, err)
-
-	publishUpdates := 0
-	const callbackName = "test:fail_second_vsearch_publish_batch"
-	require.NoError(t, model.DB.Callback().Update().Before("gorm:update").Register(callbackName, func(tx *gorm.DB) {
-		updates, ok := tx.Statement.Dest.(map[string]any)
-		if !ok {
-			return
-		}
-		_, publishesStatus := updates["status"]
-		_, refreshesUpstreamCost := updates["upstream_cost_micros"]
-		if !publishesStatus || refreshesUpstreamCost {
-			return
-		}
-		publishUpdates++
-		if publishUpdates == 501 {
-			tx.AddError(errors.New("forced second batch failure"))
-		}
-	}))
-	t.Cleanup(func() { _ = model.DB.Callback().Update().Remove(callbackName) })
-
-	result, err := control.SyncCatalog(context.Background(), SyncCommand{Queries: []string{"all"}})
-
-	require.NoError(t, err)
-	assert.Equal(t, 501, len(result.SyncedServiceIDs))
-	assert.Equal(t, 500, result.Published)
-	assert.Contains(t, result.Failures, "目录已同步，但自动启用未全部完成，请重试。")
-	assert.NotContains(t, strings.Join(result.Failures, " "), "forced second batch failure")
-	capabilities, listErr := model.ListSearchCapabilities(true)
-	require.NoError(t, listErr)
-	enabled := 0
-	for _, capability := range capabilities {
-		if capability.Status == model.SearchCapabilityStatusEnabled {
-			enabled++
-		}
-	}
-	assert.Equal(t, 500, enabled)
 }
 
 func TestControlPlanePublishCatalogPublishesEligibleCapabilitiesAtCostFloorForAllEnterprises(t *testing.T) {

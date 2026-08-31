@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -23,6 +24,7 @@ var (
 
 type searchUpstreamAccountRequest struct {
 	Name     string `json:"name"`
+	Provider string `json:"provider"`
 	BaseURL  string `json:"base_url"`
 	Secret   string `json:"secret"`
 	APIKey   string `json:"api_key"`
@@ -30,11 +32,6 @@ type searchUpstreamAccountRequest struct {
 	Weight   int    `json:"weight"`
 	Priority int    `json:"priority"`
 	Status   string `json:"status"`
-}
-
-type searchCatalogSyncRequest struct {
-	Queries []string `json:"queries"`
-	Prefix  string   `json:"prefix"`
 }
 
 type searchCapabilityConfigRequest struct {
@@ -53,6 +50,23 @@ type searchCapabilityEnterpriseGrantsResponse struct {
 	EnterpriseIDs []int  `json:"enterprise_ids"`
 }
 
+type searchUsageReconciliationRequest struct {
+	Action string `json:"action"`
+	Note   string `json:"note"`
+}
+
+type searchUsageReconciliationResponse struct {
+	ID                   int64  `json:"id"`
+	RequestID            string `json:"request_id"`
+	Status               string `json:"status"`
+	BillingState         string `json:"billing_state"`
+	ReconciliationAction string `json:"reconciliation_action"`
+	ReconciledBy         int    `json:"reconciled_by"`
+	ReconciledAt         int64  `json:"reconciled_at"`
+	ReconciliationNote   string `json:"reconciliation_note"`
+	Started              bool   `json:"started"`
+}
+
 type searchExecuteRequest struct {
 	ServiceID string         `json:"service_id"`
 	Params    map[string]any `json:"params"`
@@ -65,7 +79,7 @@ type searchLogResponse struct {
 	Endpoint                  string  `json:"endpoint"`
 	Status                    string  `json:"status"`
 	LatencyMs                 int64   `json:"latency_ms"`
-	AgentKeyName              string  `json:"agent_key_name"`
+	KeyName                   string  `json:"key_name"`
 	RequestID                 string  `json:"request_id"`
 	Charge                    float64 `json:"charge"`
 	ChargeMicros              int64   `json:"charge_micros"`
@@ -83,6 +97,11 @@ type searchLogResponse struct {
 	PlannedChargeMicros       int64   `json:"planned_charge_micros,omitempty"`
 	PlannedUpstreamCostMicros int64   `json:"planned_upstream_cost_micros,omitempty"`
 	ErrorCode                 string  `json:"error_code,omitempty"`
+	UpstreamRequestID         string  `json:"upstream_request_id,omitempty"`
+	ReconciliationAction      string  `json:"reconciliation_action,omitempty"`
+	ReconciledBy              int     `json:"reconciled_by,omitempty"`
+	ReconciledAt              int64   `json:"reconciled_at,omitempty"`
+	ReconciliationNote        string  `json:"reconciliation_note,omitempty"`
 }
 
 type searchLogStatResponse struct {
@@ -105,6 +124,15 @@ type searchLogStatResponse struct {
 
 func GetSearchCatalog(c *gin.Context) {
 	catalog, err := searchRuntime.ListCatalogGroups(c.Request.Context(), dashboardSearchPrincipal(c))
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, catalog)
+}
+
+func GetPublicSearchCatalog(c *gin.Context) {
+	catalog, err := searchRuntime.ListPublicCatalog(c.Request.Context())
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -141,13 +169,26 @@ func ExecuteSearchCapability(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	idempotencyKey := strings.TrimSpace(c.GetHeader("Idempotency-Key"))
+	if idempotencyKey == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false, "code": "IDEMPOTENCY_KEY_REQUIRED",
+			"message": "vSearch 执行请求必须携带 Idempotency-Key。",
+		})
+		return
+	}
 	result, err := searchRuntime.Execute(c.Request.Context(), principal, vsearch.ExecuteCommand{
-		ServiceID: request.ServiceID, Params: request.Params, IdempotencyKey: c.GetHeader("Idempotency-Key"),
+		ServiceID: request.ServiceID, Params: request.Params, IdempotencyKey: idempotencyKey,
 	})
 	if err != nil {
 		var publicErr *vsearch.PublicError
 		if errors.As(err, &publicErr) {
-			c.JSON(publicErr.HTTPStatus, gin.H{"success": false, "message": publicErr.Message, "code": publicErr.Code})
+			response := gin.H{"success": false, "message": publicErr.Message, "code": publicErr.Code}
+			if publicErr.RetryAfterSeconds > 0 {
+				c.Header("Retry-After", strconv.Itoa(publicErr.RetryAfterSeconds))
+				response["retry_after_seconds"] = publicErr.RetryAfterSeconds
+			}
+			c.JSON(publicErr.HTTPStatus, response)
 			return
 		}
 		common.ApiError(c, err)
@@ -196,7 +237,7 @@ func adminSaveSearchUpstreamAccount(c *gin.Context, id int) {
 		request.Secret = request.APIKey
 	}
 	account, err := searchControlPlane.SaveAccount(c.Request.Context(), vsearch.AccountCommand{
-		ID: id, Name: request.Name, BaseURL: request.BaseURL, Secret: request.Secret,
+		ID: id, Name: request.Name, Provider: request.Provider, BaseURL: request.BaseURL, Secret: request.Secret,
 		PoolID: request.PoolID, Weight: request.Weight, Priority: request.Priority, Status: request.Status,
 	})
 	if err != nil {
@@ -243,14 +284,7 @@ func AdminGetSearchCatalog(c *gin.Context) {
 }
 
 func AdminSyncSearchCatalog(c *gin.Context) {
-	var request searchCatalogSyncRequest
-	if c.Request.ContentLength != 0 {
-		if err := c.ShouldBindJSON(&request); err != nil {
-			common.ApiErrorMsg(c, "vSearch catalog sync request is invalid")
-			return
-		}
-	}
-	result, err := searchControlPlane.SyncCatalog(c.Request.Context(), vsearch.SyncCommand{Queries: request.Queries, Prefix: request.Prefix})
+	result, err := searchControlPlane.SyncCatalog(c.Request.Context())
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -377,6 +411,44 @@ func AdminGetSearchUsageStat(c *gin.Context) {
 	writeSearchLogStat(c, true)
 }
 
+func AdminReconcileSearchUsage(c *gin.Context) {
+	eventID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || eventID <= 0 {
+		common.ApiErrorMsg(c, "vSearch usage id is invalid")
+		return
+	}
+	var request searchUsageReconciliationRequest
+	if err := common.DecodeJson(c.Request.Body, &request); err != nil {
+		common.ApiErrorMsg(c, "vSearch reconciliation request is invalid")
+		return
+	}
+	result, err := vsearch.ReconcileUsage(c.Request.Context(), vsearch.UsageReconciliationCommand{
+		EventID: eventID, Action: request.Action, AdminID: c.GetInt("id"), Note: request.Note,
+	})
+	if err != nil {
+		var publicErr *vsearch.PublicError
+		if errors.As(err, &publicErr) {
+			c.JSON(publicErr.HTTPStatus, gin.H{"success": false, "message": publicErr.Message, "code": publicErr.Code})
+			return
+		}
+		common.ApiError(c, err)
+		return
+	}
+	if result.Started {
+		recordManageAudit(c, "vsearch.usage_reconcile", map[string]interface{}{
+			"usage_id": result.Event.Id, "request_id": result.Event.RequestID,
+			"resolution": result.Event.ReconciliationAction, "note": result.Event.ReconciliationNote,
+		})
+	}
+	common.ApiSuccess(c, searchUsageReconciliationResponse{
+		ID: result.Event.Id, RequestID: result.Event.RequestID,
+		Status: searchUsageStatusName(result.Event.Status), BillingState: result.Event.BillingState,
+		ReconciliationAction: result.Event.ReconciliationAction, ReconciledBy: result.Event.ReconciledBy,
+		ReconciledAt: result.Event.ReconciledAt, ReconciliationNote: result.Event.ReconciliationNote,
+		Started: result.Started,
+	})
+}
+
 func AdminExportSearchUsageLogs(c *gin.Context) {
 	query := searchUsageQuery(c, true)
 	rows, err := vsearch.ExportUsageLogs(c.Request.Context(), query, 10_000)
@@ -391,12 +463,20 @@ func AdminExportSearchUsageLogs(c *gin.Context) {
 	_ = writer.Write([]string{"time", "request_id", "user_id", "user", "enterprise_id", "enterprise", "service", "upstream_account", "status", "latency_ms", "upstream_cost", "revenue", "profit", "error_code"})
 	for _, row := range rows {
 		event := row.Event
+		upstreamCostMicros := int64(0)
+		chargeMicros := int64(0)
+		if model.IsSearchUsageUpstreamCostRealized(event) {
+			upstreamCostMicros = event.UpstreamCostMicros
+		}
+		if model.IsSearchUsageFinanciallyRealized(event) {
+			chargeMicros = event.ChargeMicros
+		}
 		_ = writer.Write([]string{
 			time.Unix(event.CreatedAt, 0).Format(time.RFC3339), sanitizeSearchCSVText(event.RequestID),
 			strconv.Itoa(event.UserID), sanitizeSearchCSVText(row.UserName), strconv.Itoa(event.EnterpriseID), sanitizeSearchCSVText(row.EnterpriseName), sanitizeSearchCSVText(event.ServiceName), sanitizeSearchCSVText(row.AccountName),
 			searchUsageStatusName(event.Status), strconv.FormatInt(event.LatencyMs, 10),
-			formatSearchMoney(event.UpstreamCostMicros), formatSearchMoney(event.ChargeMicros),
-			formatSearchMoney(event.ChargeMicros - event.UpstreamCostMicros), sanitizeSearchCSVText(event.ErrorCode),
+			formatSearchMoney(upstreamCostMicros), formatSearchMoney(chargeMicros),
+			formatSearchMoney(chargeMicros - upstreamCostMicros), sanitizeSearchCSVText(event.ErrorCode),
 		})
 	}
 	writer.Flush()
@@ -415,27 +495,41 @@ func writeSearchLogs(c *gin.Context, admin bool) {
 	items := make([]searchLogResponse, 0, len(logs))
 	for _, log := range logs {
 		event := log.Event
+		realized := model.IsSearchUsageFinanciallyRealized(event)
+		chargeMicros := int64(0)
+		if realized {
+			chargeMicros = event.ChargeMicros
+		}
 		item := searchLogResponse{
 			ID: event.Id, CreatedAt: event.CreatedAt, Service: event.ServiceName,
 			Endpoint: event.Action, Status: searchUsageStatusName(event.Status),
 			LatencyMs: event.LatencyMs, RequestID: event.RequestID,
-			Charge: float64(event.ChargeMicros) / 1_000_000, ChargeMicros: event.ChargeMicros,
+			Charge: float64(chargeMicros) / 1_000_000, ChargeMicros: chargeMicros,
 			ErrorCode: event.ErrorCode,
 		}
-		item.AgentKeyName = log.AgentKeyName
+		item.KeyName = log.AgentKeyName
 		if admin {
+			upstreamCostMicros := int64(0)
+			if model.IsSearchUsageUpstreamCostRealized(event) {
+				upstreamCostMicros = event.UpstreamCostMicros
+			}
+			item.UpstreamRequestID = event.UpstreamRequestID
 			item.UserID = event.UserID
 			item.EnterpriseID = event.EnterpriseID
 			item.UserName = log.UserName
 			item.EnterpriseName = log.EnterpriseName
-			item.UpstreamCost = float64(event.UpstreamCostMicros) / 1_000_000
-			item.UpstreamCostMicros = event.UpstreamCostMicros
-			item.ProfitMicros = event.ChargeMicros - event.UpstreamCostMicros
+			item.UpstreamCost = float64(upstreamCostMicros) / 1_000_000
+			item.UpstreamCostMicros = upstreamCostMicros
+			item.ProfitMicros = chargeMicros - upstreamCostMicros
 			item.Profit = float64(item.ProfitMicros) / 1_000_000
 			item.ExecutionPhase = event.ExecutionPhase
 			item.BillingState = event.BillingState
 			item.PlannedChargeMicros = event.PlannedChargeMicros
 			item.PlannedUpstreamCostMicros = event.PlannedUpstreamCostMicros
+			item.ReconciliationAction = event.ReconciliationAction
+			item.ReconciledBy = event.ReconciledBy
+			item.ReconciledAt = event.ReconciledAt
+			item.ReconciliationNote = event.ReconciliationNote
 			item.Account = log.AccountName
 		}
 		items = append(items, item)
@@ -528,17 +622,17 @@ func dashboardSearchExecutionPrincipal(c *gin.Context) (vsearch.Principal, error
 		}
 		return vsearch.Principal{UserID: userID, EnterpriseID: enterpriseID, AgentKeyID: key.Id, Scopes: scopes}, nil
 	}
-	return vsearch.Principal{}, errors.New("create a vSearch AgentKey before executing capabilities")
+	return vsearch.Principal{}, errors.New("create a vSearch key before executing capabilities")
 }
 
 func mcpSearchPrincipal(c *gin.Context) (vsearch.Principal, error) {
 	value, ok := c.Get("search_agent_key")
 	if !ok {
-		return vsearch.Principal{}, errors.New("vSearch AgentKey context is missing")
+		return vsearch.Principal{}, errors.New("vSearch key context is missing")
 	}
 	key, ok := value.(*model.SearchAgentKey)
 	if !ok || key == nil {
-		return vsearch.Principal{}, errors.New("vSearch AgentKey context is invalid")
+		return vsearch.Principal{}, errors.New("vSearch key context is invalid")
 	}
 	scopes, err := key.GetScopes()
 	if err != nil {

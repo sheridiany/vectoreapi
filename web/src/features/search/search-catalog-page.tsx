@@ -21,6 +21,7 @@ import { useMemo, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { StatusBadge } from '@/components/status-badge'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import {
@@ -35,6 +36,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 
 import { fetchSearchCatalog, type SearchCatalogItem } from './api'
 import { SearchShell } from './components/search-shell'
+import { formatVSearchPlatformLabel } from './lib/platform-label'
 import { formatCnyMoney } from './money'
 
 const ALL_CATEGORIES = 'all'
@@ -61,16 +63,17 @@ export function SearchCatalogPage() {
         return false
       }
       if (!normalizedQuery) return true
-      return `${item.name} ${item.description} ${item.category}`
+      return `${item.name} ${item.description} ${item.category} ${(item.supported_platforms || []).join(' ')}`
         .toLocaleLowerCase()
         .includes(normalizedQuery)
     })
   }, [catalog, category, query])
-  const availableCount = catalog.filter(
-    (item) => item.status === 'available' && item.enabled
-  ).length
-  const interfaceCount = catalog.reduce(
+  const catalogedInterfaceCount = catalog.reduce(
     (total, item) => total + item.interface_count,
+    0
+  )
+  const callableInterfaceCount = catalog.reduce(
+    (total, item) => total + getCallableInterfaceCount(item),
     0
   )
 
@@ -157,21 +160,25 @@ export function SearchCatalogPage() {
 
         <div className='mt-6 grid gap-3 sm:grid-cols-3'>
           <CatalogMetric
-            label={t('Available capabilities')}
+            label={t('Catalog capabilities')}
             value={
-              catalogQuery.isLoading ? '—' : availableCount.toLocaleString()
+              catalogQuery.isLoading ? '—' : catalog.length.toLocaleString()
+            }
+          />
+          <CatalogMetric
+            label={t('Cataloged interfaces')}
+            value={
+              catalogQuery.isLoading
+                ? '—'
+                : catalogedInterfaceCount.toLocaleString()
             }
           />
           <CatalogMetric
             label={t('Callable interfaces')}
             value={
-              catalogQuery.isLoading ? '—' : interfaceCount.toLocaleString()
-            }
-          />
-          <CatalogMetric
-            label={t('Catalog capabilities')}
-            value={
-              catalogQuery.isLoading ? '—' : catalog.length.toLocaleString()
+              catalogQuery.isLoading
+                ? '—'
+                : callableInterfaceCount.toLocaleString()
             }
           />
         </div>
@@ -222,7 +229,7 @@ export function SearchCatalogPage() {
               id='search-catalog-list-title'
               className='text-lg font-semibold'
             >
-              {t('Available capabilities')}
+              {t('Capability catalog')}
             </h2>
             {!catalogQuery.isLoading && (
               <p className='text-muted-foreground mt-1 text-sm'>
@@ -257,7 +264,8 @@ function CapabilityCard(props: {
   t: (key: string, options?: Record<string, unknown>) => string
 }) {
   const { item, t } = props
-  const available = item.status === 'available' && item.enabled
+  const callableInterfaceCount = getCallableInterfaceCount(item)
+  const status = getCatalogStatus(item, callableInterfaceCount, t)
   return (
     <Card size='sm'>
       <CardContent className='flex h-full flex-col p-4'>
@@ -266,8 +274,8 @@ function CapabilityCard(props: {
             <Sparkles className='size-5' aria-hidden='true' />
           </div>
           <StatusBadge
-            label={available ? t('Available') : t('Unavailable')}
-            variant={available ? 'success' : 'neutral'}
+            label={status.label}
+            variant={status.variant}
             copyable={false}
           />
         </div>
@@ -276,9 +284,27 @@ function CapabilityCard(props: {
         <p className='text-muted-foreground mt-3 flex-1 text-sm leading-6'>
           {item.description}
         </p>
+        {(item.supported_platforms || []).length > 0 && (
+          <div className='mt-4'>
+            <p className='text-muted-foreground text-xs font-medium'>
+              {t('Supported platforms')}
+            </p>
+            <div className='mt-2 flex flex-wrap gap-1.5'>
+              {item.supported_platforms?.map((platform) => (
+                <Badge key={platform} variant='outline'>
+                  {formatVSearchPlatformLabel(platform)}
+                </Badge>
+              ))}
+            </div>
+          </div>
+        )}
         <div className='text-muted-foreground mt-4 flex flex-wrap gap-x-4 gap-y-2 border-t pt-3 text-xs'>
           <span>
-            {t('{{count}} interfaces', { count: item.interface_count })}
+            {t('Cataloged interfaces')}: {item.interface_count.toLocaleString()}
+          </span>
+          <span>
+            {t('Callable interfaces')}:{' '}
+            {callableInterfaceCount.toLocaleString()}
           </span>
           {item.recent_latency_ms != null && (
             <span className='inline-flex items-center gap-1'>
@@ -291,6 +317,36 @@ function CapabilityCard(props: {
       </CardContent>
     </Card>
   )
+}
+
+function getCallableInterfaceCount(item: SearchCatalogItem) {
+  if (item.available_interface_count !== undefined) {
+    return item.available_interface_count
+  }
+  if (item.healthy_route_count !== undefined) return item.healthy_route_count
+  if (item.status === 'available' && item.enabled) return item.interface_count
+  return 0
+}
+
+function getCatalogStatus(
+  item: SearchCatalogItem,
+  callableInterfaceCount: number,
+  t: (key: string) => string
+) {
+  if (
+    item.status === 'available' &&
+    item.enabled &&
+    callableInterfaceCount > 0
+  ) {
+    return { label: t('Available'), variant: 'success' as const }
+  }
+  if (item.status === 'catalog') {
+    return { label: t('Preparing'), variant: 'warning' as const }
+  }
+  return {
+    label: t('Temporarily unavailable'),
+    variant: 'neutral' as const,
+  }
 }
 
 function catalogPriceLabel(item: SearchCatalogItem) {

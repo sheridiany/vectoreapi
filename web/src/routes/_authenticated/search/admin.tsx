@@ -13,11 +13,11 @@ GNU Affero General Public License for more details.
 */
 import { createFileRoute, redirect } from '@tanstack/react-router'
 
-import { requireSearchAgentKeyAdmin } from '@/features/search/route-guard'
+import { requireSearchAdmin } from '@/features/search/route-guard'
 
 export const Route = createFileRoute('/_authenticated/search/admin')({
   beforeLoad: () => {
-    requireSearchAgentKeyAdmin()
-    throw redirect({ to: '/search/admin/agent-keys' })
+    requireSearchAdmin()
+    throw redirect({ to: '/search/admin/keys' })
   },
 })

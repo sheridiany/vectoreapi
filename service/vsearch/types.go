@@ -4,31 +4,93 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 const (
-	DefaultAgentKeyMCPURL   = "https://api.agentkey.app/v1/mcp"
-	AgentKeyProtocolVersion = "2025-06-18"
+	DefaultJustOneAPIBaseURL = "https://api.justoneapi.com"
+	DefaultTikHubBaseURL     = "https://api.tikhub.io"
 
-	defaultAgentKeyTimeout          = 15 * time.Second
-	defaultAgentKeyMaxResponseBytes = int64(4 << 20)
+	ProviderJustOneAPI = "justoneapi_rest"
+	ProviderTikHub     = "tikhub_rest"
+
+	AuthPlacementBearer = "bearer"
+	AuthPlacementQuery  = "query"
+	AuthPlacementForm   = "form"
 )
 
-type UpstreamConnector interface {
-	Account(ctx context.Context) (any, error)
-	FindTools(ctx context.Context, query string, prefix string) (any, error)
-	DescribeTool(ctx context.Context, name string) (any, error)
-	ExecuteTool(ctx context.Context, name string, params map[string]any) (any, error)
+// ProviderAdapter contains provider-specific authentication, request mapping,
+// and response normalization behind a provider-neutral runtime contract.
+type ProviderAdapter interface {
+	Probe(ctx context.Context) (AccountState, error)
+	SnapshotCatalog(ctx context.Context) (CatalogSnapshot, error)
+	Execute(ctx context.Context, operation ProviderOperation, request CanonicalRequest) (AttemptResult, error)
 }
 
-type AgentKeyConnectorConfig struct {
+type AdapterConfig struct {
+	Provider          string
 	BaseURL           string
 	Secret            string
 	Timeout           time.Duration
 	MaxResponseBytes  int64
 	HTTPClient        *http.Client
 	AllowLoopbackHTTP bool
+}
+
+type AccountState struct {
+	Plan                string
+	BalanceAmountMicros int64
+	BalanceCurrency     string
+}
+
+type CatalogSnapshot struct {
+	Provider   string
+	Version    string
+	SchemaHash string
+	Operations []ProviderOperation
+}
+
+type ProviderOperation struct {
+	OperationKey       string
+	ContractVersion    string
+	Platform           string
+	OperationID        string
+	Method             string
+	Path               string
+	AuthPlacement      string
+	MappingKey         string
+	MappingVersion     string
+	ParameterMap       map[string]string
+	FixedParams        map[string]any
+	InputSchema        map[string]any
+	OutputSchema       map[string]any
+	CostAmountMicros   int64
+	CostCurrency       string
+	ContractEquivalent bool
+	BillingReady       bool
+}
+
+type CanonicalRequest struct {
+	OperationKey string
+	Platform     string
+	Params       map[string]any
+	PageToken    string
+}
+
+type AttemptResult struct {
+	Data              any
+	NextPageToken     string
+	HasMore           *bool
+	ProviderRequestID string
+	HTTPStatus        int
+	BusinessCode      string
+	Dispatched        bool
+	Billable          *bool
+	CostAmountMicros  int64
+	CostCurrency      string
+	RetryAfter        time.Duration
 }
 
 type ConnectorError struct {
@@ -64,5 +126,30 @@ func newConnectorContextError(err error) *ConnectorError {
 		HTTPStatus: http.StatusGatewayTimeout,
 		Message:    "上游服务响应超时。",
 		cause:      context.DeadlineExceeded,
+	}
+}
+
+func sanitizeProviderRequestID(value, secret string) string {
+	value = strings.TrimSpace(value)
+	secret = strings.TrimSpace(secret)
+	if value == "" || (secret != "" && strings.Contains(value, secret)) {
+		return ""
+	}
+	if len(value) <= 128 {
+		return value
+	}
+	for len(value) > 128 {
+		_, size := utf8.DecodeLastRuneInString(value)
+		value = value[:len(value)-size]
+	}
+	return value
+}
+
+func searchProviderReservedParam(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "token", "authorization", "headers", "cookie", "cookies", "proxy", "path", "method", "provider_params", "router", "raw":
+		return true
+	default:
+		return false
 	}
 }

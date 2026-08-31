@@ -7,7 +7,9 @@ import (
 )
 
 func registerSearchRoutes(apiRouter *gin.RouterGroup, anonymousRequestBodyLimit gin.HandlerFunc) {
-	searchAgentKeyRoute := apiRouter.Group("/search/agent-keys")
+	apiRouter.GET("/search/public/catalog", controller.GetPublicSearchCatalog)
+
+	searchAgentKeyRoute := apiRouter.Group("/search/keys")
 	searchAgentKeyRoute.Use(middleware.UserAuth())
 	{
 		searchAgentKeyRoute.GET("", controller.GetSearchAgentKeys)
@@ -27,7 +29,7 @@ func registerSearchRoutes(apiRouter *gin.RouterGroup, anonymousRequestBodyLimit 
 		searchUserRoute.GET("/logs/stat", controller.GetSearchLogStat)
 	}
 
-	searchManagedAgentKeyRoute := apiRouter.Group("/search/admin/agent-keys")
+	searchManagedAgentKeyRoute := apiRouter.Group("/search/admin/keys")
 	searchManagedAgentKeyRoute.Use(middleware.UserAuth(), middleware.SearchAdminAuth())
 	{
 		searchManagedAgentKeyRoute.GET("", controller.AdminGetSearchAgentKeys)
@@ -53,6 +55,7 @@ func registerSearchRoutes(apiRouter *gin.RouterGroup, anonymousRequestBodyLimit 
 		searchAdminRoute.GET("/usage-logs", controller.AdminGetSearchUsageLogs)
 		searchAdminRoute.GET("/usage-logs/stat", controller.AdminGetSearchUsageStat)
 		searchAdminRoute.GET("/usage-logs/export", controller.AdminExportSearchUsageLogs)
+		searchAdminRoute.POST("/usage-logs/:id/reconcile", middleware.CriticalRateLimit(), middleware.DisableCache(), controller.AdminReconcileSearchUsage)
 	}
 
 	apiRouter.POST("/agent/install", middleware.CriticalRateLimit(), middleware.DisableCache(), anonymousRequestBodyLimit, controller.InstallSearchAgent)

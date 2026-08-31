@@ -24,7 +24,8 @@ const (
 	SearchUpstreamPoolStrategyFailover = "failover"
 	SearchUpstreamPoolStrategySticky   = "sticky"
 
-	SearchUpstreamProviderAgentKeyMCP = "agentkey_mcp"
+	SearchUpstreamProviderJustOneAPI = "justoneapi_rest"
+	SearchUpstreamProviderTikHub     = "tikhub_rest"
 )
 
 var (
@@ -55,6 +56,7 @@ type SearchUpstreamAccount struct {
 	SecretPrefix       string         `json:"secret_prefix" gorm:"size:32;not null"`
 	Plan               string         `json:"plan" gorm:"size:64"`
 	BalanceMicros      int64          `json:"balance_micros" gorm:"not null"`
+	BalanceCurrency    string         `json:"balance_currency" gorm:"size:8"`
 	Weight             int            `json:"weight" gorm:"type:int;not null"`
 	Priority           int            `json:"priority" gorm:"type:int;not null"`
 	Status             int            `json:"status" gorm:"type:int;not null;index"`
@@ -122,6 +124,7 @@ func normalizeSearchUpstreamAccount(account *SearchUpstreamAccount) error {
 	account.BaseURL = strings.TrimSpace(account.BaseURL)
 	account.SecretPrefix = strings.TrimSpace(account.SecretPrefix)
 	account.Plan = strings.TrimSpace(account.Plan)
+	account.BalanceCurrency = strings.ToUpper(strings.TrimSpace(account.BalanceCurrency))
 	account.LastErrorCode = strings.TrimSpace(account.LastErrorCode)
 	account.LastErrorMessage = strings.TrimSpace(account.LastErrorMessage)
 	if account.PoolID <= 0 {
@@ -131,12 +134,12 @@ func normalizeSearchUpstreamAccount(account *SearchUpstreamAccount) error {
 		return errors.New("search upstream account name must be between 1 and 64 characters")
 	}
 	if account.Provider == "" {
-		account.Provider = SearchUpstreamProviderAgentKeyMCP
+		account.Provider = SearchUpstreamProviderTikHub
 	}
-	if account.Provider != SearchUpstreamProviderAgentKeyMCP {
+	if account.Provider != SearchUpstreamProviderJustOneAPI && account.Provider != SearchUpstreamProviderTikHub {
 		return errors.New("search upstream provider is unsupported")
 	}
-	parsedURL, err := ValidateSearchUpstreamBaseURL(account.BaseURL, SearchUpstreamLoopbackHTTPEnabled())
+	parsedURL, err := ValidateSearchUpstreamProviderBaseURL(account.Provider, account.BaseURL, SearchUpstreamLoopbackHTTPEnabled())
 	if err != nil {
 		return err
 	}
@@ -144,7 +147,7 @@ func normalizeSearchUpstreamAccount(account *SearchUpstreamAccount) error {
 	if account.SecretCiphertext == "" || account.SecretNonce == "" || account.SecretVersion <= 0 || account.SecretPrefix == "" {
 		return errors.New("search upstream encrypted secret is required")
 	}
-	if len(account.SecretNonce) > 64 || len([]rune(account.SecretPrefix)) > 32 || len([]rune(account.Plan)) > 64 || len([]rune(account.LastErrorCode)) > 64 || len([]rune(account.LastErrorMessage)) > 255 {
+	if len(account.SecretNonce) > 64 || len([]rune(account.SecretPrefix)) > 32 || len([]rune(account.Plan)) > 64 || len(account.BalanceCurrency) > 8 || len([]rune(account.LastErrorCode)) > 64 || len([]rune(account.LastErrorMessage)) > 255 {
 		return errors.New("search upstream account text value is too long")
 	}
 	if account.BalanceMicros < 0 || account.FailureCount < 0 || account.ConcurrentRequests < 0 {
@@ -185,6 +188,33 @@ func ValidateSearchUpstreamBaseURL(rawURL string, allowLoopbackHTTP bool) (*url.
 	}
 	if endpoint.Scheme != "http" || !allowLoopbackHTTP || !isSearchUpstreamLoopbackHost(endpoint.Hostname()) {
 		return nil, ErrSearchUpstreamURLHTTPSRequired
+	}
+	return endpoint, nil
+}
+
+func ValidateSearchUpstreamProviderBaseURL(provider, rawURL string, allowLoopbackHTTP bool) (*url.URL, error) {
+	endpoint, err := ValidateSearchUpstreamBaseURL(rawURL, allowLoopbackHTTP)
+	if err != nil {
+		return nil, err
+	}
+	if allowLoopbackHTTP && isSearchUpstreamLoopbackHost(endpoint.Hostname()) {
+		return endpoint, nil
+	}
+	if port := endpoint.Port(); port != "" && port != "443" {
+		return nil, ErrSearchUpstreamURLInvalid
+	}
+	host := endpoint.Hostname()
+	switch strings.TrimSpace(provider) {
+	case SearchUpstreamProviderJustOneAPI:
+		if !strings.EqualFold(host, "api.justoneapi.com") {
+			return nil, ErrSearchUpstreamURLInvalid
+		}
+	case SearchUpstreamProviderTikHub:
+		if !strings.EqualFold(host, "api.tikhub.io") && !strings.EqualFold(host, "api.tikhub.dev") {
+			return nil, ErrSearchUpstreamURLInvalid
+		}
+	default:
+		return nil, ErrSearchUpstreamURLInvalid
 	}
 	return endpoint, nil
 }
@@ -269,7 +299,30 @@ func UpdateSearchUpstreamAccount(account *SearchUpstreamAccount) error {
 	if err := normalizeSearchUpstreamAccount(account); err != nil {
 		return err
 	}
-	result := DB.Model(&SearchUpstreamAccount{}).Where("id = ?", account.Id).Updates(map[string]any{
+	return updateSearchUpstreamAccount(DB, account)
+}
+
+func UpdateSearchUpstreamAccountAndDisableBindings(account *SearchUpstreamAccount) error {
+	if account == nil || account.Id <= 0 {
+		return errors.New("search upstream account id is invalid")
+	}
+	if err := normalizeSearchUpstreamAccount(account); err != nil {
+		return err
+	}
+	return DB.Transaction(func(tx *gorm.DB) error {
+		if err := updateSearchUpstreamAccount(tx, account); err != nil {
+			return err
+		}
+		return tx.Model(&SearchCapabilityBinding{}).
+			Where("upstream_account_id = ? AND status = ?", account.Id, SearchCapabilityBindingStatusEnabled).
+			Updates(map[string]any{
+				"status": SearchCapabilityBindingStatusDisabled, "updated_at": common.GetTimestamp(),
+			}).Error
+	})
+}
+
+func updateSearchUpstreamAccount(db *gorm.DB, account *SearchUpstreamAccount) error {
+	result := db.Model(&SearchUpstreamAccount{}).Where("id = ?", account.Id).Updates(map[string]any{
 		"pool_id":             account.PoolID,
 		"provider":            account.Provider,
 		"name":                account.Name,
@@ -280,6 +333,7 @@ func UpdateSearchUpstreamAccount(account *SearchUpstreamAccount) error {
 		"secret_prefix":       account.SecretPrefix,
 		"plan":                account.Plan,
 		"balance_micros":      account.BalanceMicros,
+		"balance_currency":    account.BalanceCurrency,
 		"weight":              account.Weight,
 		"priority":            account.Priority,
 		"status":              account.Status,
@@ -290,7 +344,20 @@ func UpdateSearchUpstreamAccount(account *SearchUpstreamAccount) error {
 		"last_error_message":  account.LastErrorMessage,
 		"updated_at":          common.GetTimestamp(),
 	})
-	return searchUpdateError(result, &SearchUpstreamAccount{}, account.Id)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected > 0 {
+		return nil
+	}
+	var count int64
+	if err := db.Model(&SearchUpstreamAccount{}).Where("id = ?", account.Id).Count(&count).Error; err != nil {
+		return err
+	}
+	if count == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
 }
 
 func GetSearchUpstreamAccountByID(id int) (*SearchUpstreamAccount, error) {

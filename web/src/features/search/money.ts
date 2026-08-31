@@ -19,9 +19,27 @@ export function formatCnyMoney(
   value: MoneyValue,
   locales?: Intl.LocalesArgument
 ) {
+  return formatMoneyValue(value, 'CNY', 'symbol', locales)
+}
+
+export function formatMoney(
+  value: MoneyValue,
+  currency: string,
+  locales?: Intl.LocalesArgument
+) {
+  return formatMoneyValue(value, currency, 'code', locales)
+}
+
+function formatMoneyValue(
+  value: MoneyValue,
+  currency: string,
+  currencyDisplay: 'code' | 'symbol',
+  locales?: Intl.LocalesArgument
+) {
   const micros = resolveCnyMicros(value)
   if (micros === null) return '—'
 
+  const normalizedCurrency = currency.trim().toUpperCase() || 'CNY'
   const absoluteMicros = Math.abs(micros)
   const whole = Math.floor(absoluteMicros / MICROS_PER_CNY)
   const remainder = absoluteMicros % MICROS_PER_CNY
@@ -30,9 +48,15 @@ export function formatCnyMoney(
   const templateAmount =
     (micros < 0 ? -1 : 1) * (whole + (remainder === 0 ? 0 : 0.1))
 
+  if (!/^[A-Z]{3}$/.test(normalizedCurrency)) {
+    const decimal = `${micros < 0 ? '-' : ''}${whole}${fraction ? `.${fraction}` : ''}`
+    return `${normalizedCurrency} ${decimal}`
+  }
+
   return new Intl.NumberFormat(locales, {
     style: 'currency',
-    currency: 'CNY',
+    currency: normalizedCurrency,
+    currencyDisplay,
     minimumFractionDigits: fractionDigits,
     maximumFractionDigits: fractionDigits,
   })

@@ -312,6 +312,9 @@ func migrateDB() error {
 	if err != nil {
 		return err
 	}
+	if err := migrateUnsupportedSearchUpstreamProviders(); err != nil {
+		return err
+	}
 	if err := finalizeSubscriptionQuotaVersionMigration(subscriptionQuotaVersionState); err != nil {
 		return err
 	}
@@ -414,6 +417,9 @@ func migrateDBFast() error {
 		if err != nil {
 			return err
 		}
+	}
+	if err := migrateUnsupportedSearchUpstreamProviders(); err != nil {
+		return err
 	}
 	if err := finalizeSubscriptionQuotaVersionMigration(subscriptionQuotaVersionState); err != nil {
 		return err

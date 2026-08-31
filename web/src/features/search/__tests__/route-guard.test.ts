@@ -13,11 +13,7 @@ GNU Affero General Public License for more details.
 */
 import { describe, expect, test } from 'vitest'
 
-import {
-  canManageSearch,
-  canManageSearchAgentKeys,
-  canViewSearchUsage,
-} from '../route-guard'
+import { canManageSearch, canViewSearchUsage } from '../route-guard'
 
 describe('search administration permissions', () => {
   test('allows platform administrators to configure the vSearch runtime', () => {
@@ -38,40 +34,6 @@ describe('search administration permissions', () => {
     ).toBe(false)
   })
 
-  test('allows enterprise owners and administrators to manage enterprise AgentKeys', () => {
-    expect(
-      canManageSearchAgentKeys({
-        id: 2,
-        username: 'owner',
-        role: 1,
-        enterprise: {
-          id: 7,
-          name: 'Acme',
-          code: 'acme',
-          membership_id: 1,
-          role: 'owner',
-        },
-      })
-    ).toBe(true)
-    expect(
-      canManageSearchAgentKeys({
-        id: 4,
-        username: 'enterprise-admin',
-        role: 1,
-        enterprise: {
-          id: 7,
-          name: 'Acme',
-          code: 'acme',
-          membership_id: 2,
-          role: 'admin',
-        },
-      })
-    ).toBe(true)
-    expect(
-      canManageSearchAgentKeys({ id: 1, username: 'root', role: 100 })
-    ).toBe(true)
-  })
-
   test('denies runtime configuration to enterprise administrators, regular members, and signed-out users', () => {
     expect(canManageSearch(null)).toBe(false)
     expect(canManageSearch({ id: 3, username: 'member', role: 1 })).toBe(false)
@@ -89,26 +51,6 @@ describe('search administration permissions', () => {
         },
       })
     ).toBe(false)
-  })
-
-  test('denies AgentKey administration to enterprise members and auditors', () => {
-    expect(canManageSearchAgentKeys(null)).toBe(false)
-    for (const role of ['member', 'auditor'] as const) {
-      expect(
-        canManageSearchAgentKeys({
-          id: 5,
-          username: role,
-          role: 1,
-          enterprise: {
-            id: 7,
-            name: 'Acme',
-            code: 'acme',
-            membership_id: 3,
-            role,
-          },
-        })
-      ).toBe(false)
-    }
   })
 
   test('limits gateway-wide usage views to platform administrators', () => {

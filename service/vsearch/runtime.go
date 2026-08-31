@@ -8,11 +8,11 @@ import (
 	"math"
 	"math/big"
 	"net/http"
-	"os"
 	"reflect"
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
@@ -32,6 +32,7 @@ type PublicCapability struct {
 	Category           string   `json:"category"`
 	Description        string   `json:"description"`
 	SchemaStatus       string   `json:"schema_status"`
+	ContractStatus     string   `json:"contract_status"`
 	Status             string   `json:"status"`
 	Enabled            bool     `json:"enabled"`
 	InterfaceCount     int64    `json:"interface_count"`
@@ -93,9 +94,10 @@ type ExecutionResult struct {
 }
 
 type PublicError struct {
-	Code       string `json:"code"`
-	Message    string `json:"message"`
-	HTTPStatus int    `json:"-"`
+	Code              string `json:"code"`
+	Message           string `json:"message"`
+	HTTPStatus        int    `json:"-"`
+	RetryAfterSeconds int    `json:"retry_after_seconds,omitempty"`
 }
 
 func (e *PublicError) Error() string { return e.Message }
@@ -114,32 +116,104 @@ func markExecutionDispatched(err error) error {
 	return &executionDispatchedError{cause: err}
 }
 
-type ConnectorFactory func(account *model.SearchUpstreamAccount, secret string) (UpstreamConnector, error)
+type upstreamOutcomeUnknownError struct {
+	cause error
+}
+
+func (e *upstreamOutcomeUnknownError) Error() string { return e.cause.Error() }
+func (e *upstreamOutcomeUnknownError) Unwrap() error { return e.cause }
+
+func markUpstreamOutcomeUnknown(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &upstreamOutcomeUnknownError{cause: err}
+}
+
+type executionKnownOutcomeError struct {
+	cause error
+}
+
+func (e *executionKnownOutcomeError) Error() string { return e.cause.Error() }
+func (e *executionKnownOutcomeError) Unwrap() error { return e.cause }
+
+func markExecutionKnownOutcome(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &executionKnownOutcomeError{cause: err}
+}
+
+type AdapterFactory func(account *model.SearchUpstreamAccount, secret string) (ProviderAdapter, error)
 
 type ExecutionRuntime struct {
-	connectorFactory ConnectorFactory
-	chargeFactory    executionChargeFactory
+	adapterFactory AdapterFactory
+	chargeFactory  executionChargeFactory
 }
 
-func NewExecutionRuntime(factory ConnectorFactory) *ExecutionRuntime {
-	if factory == nil {
-		factory = defaultConnectorFactory
-	}
-	return &ExecutionRuntime{connectorFactory: factory, chargeFactory: func(ctx context.Context, principal Principal, requestID string, capability *model.SearchCapability) (executionCharge, error) {
+func NewExecutionRuntime(factory AdapterFactory) *ExecutionRuntime {
+	runtime := &ExecutionRuntime{chargeFactory: func(ctx context.Context, principal Principal, requestID string, capability *model.SearchCapability) (executionCharge, error) {
 		return preConsumeExecutionCharge(ctx, principal, requestID, capability)
 	}}
+	if factory == nil {
+		runtime.adapterFactory = defaultAdapterFactory
+	} else {
+		runtime.adapterFactory = factory
+	}
+	return runtime
 }
 
-func defaultConnectorFactory(account *model.SearchUpstreamAccount, secret string) (UpstreamConnector, error) {
-	return NewAgentKeyConnector(AgentKeyConnectorConfig{
-		BaseURL:           account.BaseURL,
-		Secret:            secret,
-		AllowLoopbackHTTP: strings.EqualFold(strings.TrimSpace(os.Getenv("VSEARCH_ALLOW_LOOPBACK_HTTP")), "true"),
-	})
+func defaultAdapterFactory(account *model.SearchUpstreamAccount, secret string) (ProviderAdapter, error) {
+	config := AdapterConfig{
+		Provider: account.Provider, BaseURL: account.BaseURL, Secret: secret,
+		AllowLoopbackHTTP: model.SearchUpstreamLoopbackHTTPEnabled(),
+	}
+	switch account.Provider {
+	case model.SearchUpstreamProviderJustOneAPI:
+		return NewJustOneAPIAdapter(config)
+	case model.SearchUpstreamProviderTikHub:
+		return NewTikHubAdapter(config)
+	default:
+		return nil, newConnectorError("UPSTREAM_PROVIDER_UNSUPPORTED", http.StatusBadRequest, "不支持的上游服务类型。")
+	}
+}
+
+func providerOperationFromBinding(binding *model.SearchCapabilityBinding, capability *model.SearchCapability) (ProviderOperation, error) {
+	if binding == nil || capability == nil {
+		return ProviderOperation{}, &PublicError{Code: "CAPABILITY_BINDING_INVALID", Message: "能力路由配置无效。", HTTPStatus: http.StatusServiceUnavailable}
+	}
+	operationID := strings.TrimSpace(binding.ProviderOperationID)
+	if operationID == "" {
+		operationID = strings.TrimSpace(binding.ToolName)
+	}
+	operation := ProviderOperation{
+		OperationKey: capability.OperationKey, ContractVersion: capability.ContractVersion,
+		Platform: binding.Platform, OperationID: operationID, Method: binding.HTTPMethod,
+		Path: binding.UpstreamPath, AuthPlacement: binding.AuthPlacement,
+		MappingKey: binding.MappingKey, MappingVersion: binding.MappingVersion,
+		CostAmountMicros: binding.UpstreamCostMicros, CostCurrency: binding.CostCurrency,
+	}
+	if strings.TrimSpace(binding.ParameterMap) != "" {
+		if err := common.UnmarshalJsonStr(binding.ParameterMap, &operation.ParameterMap); err != nil {
+			return ProviderOperation{}, &PublicError{Code: "CAPABILITY_BINDING_INVALID", Message: "能力参数映射无效。", HTTPStatus: http.StatusServiceUnavailable}
+		}
+	}
+	if strings.TrimSpace(binding.FixedParams) != "" {
+		if err := common.UnmarshalJsonStr(binding.FixedParams, &operation.FixedParams); err != nil {
+			return ProviderOperation{}, &PublicError{Code: "CAPABILITY_BINDING_INVALID", Message: "能力固定参数无效。", HTTPStatus: http.StatusServiceUnavailable}
+		}
+	}
+	if schema, status := parseCapabilitySchema(binding.InputSchema); status == "available" {
+		operation.InputSchema = schema
+	}
+	if schema, status := parseCapabilitySchema(binding.OutputSchema); status == "available" {
+		operation.OutputSchema = schema
+	}
+	return operation, nil
 }
 
 func (runtime *ExecutionRuntime) ListCatalog(ctx context.Context, principal Principal, includeDisabled bool) ([]PublicCapability, error) {
-	catalog, err := loadCatalogSnapshot(principal, includeDisabled)
+	catalog, err := loadCatalogSnapshot(principal, includeDisabled, !includeDisabled)
 	if err != nil {
 		return nil, err
 	}
@@ -224,7 +298,7 @@ func (runtime *ExecutionRuntime) Describe(ctx context.Context, principal Princip
 	}, nil
 }
 
-func (runtime *ExecutionRuntime) executeOnce(ctx context.Context, principal Principal, command ExecuteCommand) (ExecutionResult, error) {
+func (runtime *ExecutionRuntime) executeOnce(ctx context.Context, principal Principal, command ExecuteCommand, idempotency *model.SearchExecutionIdempotency) (ExecutionResult, error) {
 	startedAt := time.Now()
 	requestID := common.NewRequestId()
 	inputBytes := serializedSize(command.Params)
@@ -239,7 +313,7 @@ func (runtime *ExecutionRuntime) executeOnce(ctx context.Context, principal Prin
 	if validationErr := validateCapabilityParams(command.Params, capability.InputSchema); validationErr != nil {
 		return ExecutionResult{}, failSearchExecution(ctx, requestID, principal, capability, nil, nil, command.ServiceID, inputBytes, startedAt, nil, validationErr)
 	}
-	binding, account, priceFloor, err := selectExecutionTarget(capability)
+	binding, account, priceFloor, err := selectExecutionTarget(capability, command.Params)
 	if err != nil {
 		return ExecutionResult{}, failSearchExecution(ctx, requestID, principal, capability, nil, nil, command.ServiceID, inputBytes, startedAt, nil, err)
 	}
@@ -256,7 +330,7 @@ func (runtime *ExecutionRuntime) executeOnce(ctx context.Context, principal Prin
 		configErr := &PublicError{Code: "VSEARCH_NOT_CONFIGURED", Message: "vSearch 上游密钥尚未正确配置。", HTTPStatus: http.StatusServiceUnavailable}
 		return ExecutionResult{}, failSearchExecution(ctx, requestID, principal, capability, account, nil, command.ServiceID, inputBytes, startedAt, nil, configErr)
 	}
-	connector, err := runtime.connectorFactory(account, secret)
+	adapter, err := runtime.adapterFactory(account, secret)
 	if err != nil {
 		return ExecutionResult{}, failSearchExecution(ctx, requestID, principal, capability, account, nil, command.ServiceID, inputBytes, startedAt, nil, err)
 	}
@@ -272,6 +346,13 @@ func (runtime *ExecutionRuntime) executeOnce(ctx context.Context, principal Prin
 		auditErr := &PublicError{Code: "VSEARCH_AUDIT_UNAVAILABLE", Message: "vSearch 审计服务暂不可用。", HTTPStatus: http.StatusServiceUnavailable}
 		return ExecutionResult{}, failSearchExecution(ctx, requestID, principal, capability, account, nil, command.ServiceID, inputBytes, startedAt, nil, auditErr)
 	}
+	if idempotency != nil {
+		if err := model.AttachSearchExecutionUsage(idempotency.Id, idempotency.RequestHash, idempotency.ClaimToken, requestID); err != nil {
+			auditErr := &PublicError{Code: "VSEARCH_AUDIT_UNAVAILABLE", Message: "vSearch 审计服务暂不可用。", HTTPStatus: http.StatusServiceUnavailable}
+			return ExecutionResult{}, failSearchExecution(ctx, requestID, principal, capability, account, nil, command.ServiceID, inputBytes, startedAt, usageEvent, auditErr)
+		}
+		idempotency.UsageRequestID = requestID
+	}
 	charge, err := runtime.chargeFactory(ctx, principal, requestID, capability)
 	if err != nil {
 		return ExecutionResult{}, failSearchExecution(ctx, requestID, principal, capability, account, nil, command.ServiceID, inputBytes, startedAt, usageEvent, err)
@@ -285,29 +366,62 @@ func (runtime *ExecutionRuntime) executeOnce(ctx context.Context, principal Prin
 		auditErr := &PublicError{Code: "VSEARCH_AUDIT_UNAVAILABLE", Message: "vSearch 审计服务暂不可用。", HTTPStatus: http.StatusServiceUnavailable}
 		return ExecutionResult{}, failSearchExecution(ctx, requestID, principal, capability, account, charge, command.ServiceID, inputBytes, startedAt, usageEvent, auditErr)
 	}
-	result, executeErr := connector.ExecuteTool(ctx, binding.ToolName, command.Params)
+	operation, operationErr := providerOperationFromBinding(binding, capability)
+	if operationErr != nil {
+		return ExecutionResult{}, failSearchExecution(ctx, requestID, principal, capability, account, charge, command.ServiceID, inputBytes, startedAt, usageEvent, operationErr)
+	}
+	platform, _ := command.Params["platform"].(string)
+	attempt, executeErr := adapter.Execute(ctx, operation, CanonicalRequest{
+		OperationKey: capability.OperationKey, Platform: platform, Params: command.Params,
+	})
+	usageEvent.UpstreamRequestID = attempt.ProviderRequestID
+	knownBillableOutcome := attempt.Dispatched && attempt.Billable != nil && *attempt.Billable
+	if knownBillableOutcome {
+		usageEvent.UpstreamCostMicros = binding.UpstreamCostMicros
+		if attempt.CostAmountMicros > 0 && attempt.CostCurrency != "" && strings.EqualFold(attempt.CostCurrency, binding.CostCurrency) {
+			usageEvent.UpstreamCostMicros = attempt.CostAmountMicros
+		}
+	}
 	if executeErr != nil {
-		var dispatchedErr *executionDispatchedError
-		dispatched := errors.As(executeErr, &dispatchedErr)
-		if !dispatched {
+		if attempt.RetryAfter > 0 {
+			safeErr := safeRuntimeError(executeErr)
+			safeErr.RetryAfterSeconds = int(math.Ceil(attempt.RetryAfter.Seconds()))
+			executeErr = safeErr
+		}
+		indeterminate := attempt.Dispatched && attempt.Billable == nil
+		if !attempt.Dispatched {
 			usageEvent.ExecutionPhase = model.SearchUsagePhasePrepared
 		}
+		if indeterminate {
+			executeErr = markExecutionDispatched(markUpstreamOutcomeUnknown(executeErr))
+		}
 		err := failSearchExecution(ctx, requestID, principal, capability, account, charge, command.ServiceID, inputBytes, startedAt, usageEvent, executeErr)
-		if dispatched {
+		if indeterminate {
 			return ExecutionResult{}, markExecutionDispatched(err)
+		}
+		if knownBillableOutcome {
+			return ExecutionResult{}, markExecutionKnownOutcome(err)
 		}
 		return ExecutionResult{}, err
 	}
-	usageEvent.ExecutionPhase = model.SearchUsagePhaseCompleted
-	usageEvent.UpstreamCostMicros = binding.UpstreamCostMicros
-	publicResult := sanitizePublicValueWithForbidden(result, []string{
-		binding.ToolName, account.Name, account.SecretPrefix, account.BaseURL, secret,
+	publicResult := sanitizePublicValueWithForbidden(attempt.Data, []string{
+		binding.ProviderOperationID, binding.ToolName, account.Name, account.SecretPrefix, account.BaseURL, secret,
 	})
+	if capability.ContractVersion != "legacy-v1" {
+		outputSchema, status := parseCapabilitySchema(capability.OutputSchema)
+		if status != "available" || validateSchemaValue(publicResult, outputSchema, "$") != nil {
+			contractErr := &PublicError{
+				Code: "UPSTREAM_CONTRACT_MISMATCH", Message: "上游服务返回的数据不符合能力约定。", HTTPStatus: http.StatusBadGateway,
+			}
+			err := failSearchExecution(ctx, requestID, principal, capability, account, charge, command.ServiceID, inputBytes, startedAt, usageEvent, contractErr)
+			return ExecutionResult{}, markExecutionKnownOutcome(err)
+		}
+	}
+	usageEvent.ExecutionPhase = model.SearchUsagePhaseCompleted
 	latency := time.Since(startedAt).Milliseconds()
 	usageEvent.HTTPStatus = http.StatusOK
 	usageEvent.LatencyMs = latency
 	usageEvent.OutputBytes = serializedSize(publicResult)
-	usageEvent.UpstreamCostMicros = binding.UpstreamCostMicros
 	usageEvent.ChargeMicros = capability.PriceMicros
 	if err := model.MarkSearchUsageCommitPending(usageEvent); err != nil {
 		auditErr := &PublicError{Code: "VSEARCH_AUDIT_UNAVAILABLE", Message: "vSearch 审计服务暂不可用。", HTTPStatus: http.StatusServiceUnavailable}
@@ -347,9 +461,13 @@ func failSearchExecution(
 	safeErr := safeRuntimeError(err)
 	var dispatchedErr *executionDispatchedError
 	indeterminate := errors.As(err, &dispatchedErr)
+	var unknownErr *upstreamOutcomeUnknownError
+	upstreamOutcomeUnknown := errors.As(err, &unknownErr)
 	preventRetry := false
 	residualChargeMicros := int64(0)
-	if charge != nil {
+	if charge != nil && upstreamOutcomeUnknown {
+		residualChargeMicros = charge.potentialChargeMicros()
+	} else if charge != nil {
 		if usageEvent != nil {
 			if markErr := model.MarkSearchUsageRefundPending(usageEvent); markErr != nil {
 				common.SysLog("failed to persist vSearch refund intent: " + markErr.Error())
@@ -410,6 +528,7 @@ func failSearchExecution(
 	}
 	if logErr != nil {
 		common.SysLog("failed to record vSearch failure usage: " + logErr.Error())
+		return markExecutionDispatched(safeErr)
 	}
 	if preventRetry {
 		return markExecutionDispatched(safeErr)
@@ -438,7 +557,7 @@ func (runtime *ExecutionRuntime) authorizedCapability(principal Principal, publi
 	return capability, nil
 }
 
-func selectExecutionTarget(capability *model.SearchCapability) (*model.SearchCapabilityBinding, *model.SearchUpstreamAccount, int64, error) {
+func selectExecutionTarget(capability *model.SearchCapability, params map[string]any) (*model.SearchCapabilityBinding, *model.SearchUpstreamAccount, int64, error) {
 	bindings, err := listHealthySearchBindingsForCapability(capability)
 	if err != nil {
 		return nil, nil, 0, err
@@ -450,10 +569,15 @@ func selectExecutionTarget(capability *model.SearchCapability) (*model.SearchCap
 		weight  int
 	}
 	candidates := make([]candidate, 0, len(bindings))
+	requestedPlatform, _ := params["platform"].(string)
+	requestedPlatform = strings.ToLower(strings.TrimSpace(requestedPlatform))
 	selectedPriority := 0
 	for _, healthy := range bindings {
 		binding := healthy.binding
 		account := healthy.account
+		if requestedPlatform != "" && !strings.EqualFold(binding.Platform, requestedPlatform) {
+			continue
+		}
 		if len(candidates) == 0 {
 			selectedPriority = binding.Priority
 		}
@@ -517,6 +641,9 @@ func listHealthySearchBindingsForCapability(capability *model.SearchCapability) 
 	}
 	healthy := make([]healthySearchBinding, 0, len(bindings))
 	for _, binding := range bindings {
+		if !model.IsSearchCapabilityBindingExecutable(capability.ContractVersion, binding) {
+			continue
+		}
 		if !searchToolAllowed(binding.ToolName) {
 			continue
 		}
@@ -529,6 +656,9 @@ func listHealthySearchBindingsForCapability(capability *model.SearchCapability) 
 		}
 		if accountErr != nil {
 			return nil, accountErr
+		}
+		if account.Provider == model.SearchUpstreamProviderJustOneAPI {
+			continue
 		}
 		pool, poolErr := model.GetSearchUpstreamPoolByID(account.PoolID)
 		if errors.Is(poolErr, gorm.ErrRecordNotFound) {
@@ -602,7 +732,28 @@ func validateCapabilityParams(params map[string]any, rawSchema string) error {
 }
 
 func validateSchemaValue(value any, schema map[string]any, path string) error {
-	typeName, _ := schema["type"].(string)
+	rawType, hasType := schema["type"]
+	if typeNames, ok := rawType.([]any); ok {
+		for _, candidate := range typeNames {
+			typeName, valid := candidate.(string)
+			if !valid || typeName == "" {
+				return fmt.Errorf("%s 的参数定义无效", path)
+			}
+			variant := make(map[string]any, len(schema))
+			for key, item := range schema {
+				variant[key] = item
+			}
+			variant["type"] = typeName
+			if validateSchemaValue(value, variant, path) == nil {
+				return nil
+			}
+		}
+		return fmt.Errorf("%s 类型不符合约定", path)
+	}
+	typeName, validType := rawType.(string)
+	if hasType && (!validType || typeName == "") {
+		return fmt.Errorf("%s 的参数定义无效", path)
+	}
 	switch typeName {
 	case "object":
 		object, ok := value.(map[string]any)
@@ -634,8 +785,16 @@ func validateSchemaValue(value any, schema map[string]any, path string) error {
 			}
 		}
 	case "string":
-		if _, ok := value.(string); !ok {
+		text, ok := value.(string)
+		if !ok {
 			return fmt.Errorf("%s 必须是字符串", path)
+		}
+		length := float64(utf8.RuneCountInString(text))
+		if minimum, valid := schemaNumber(schema["minLength"]); valid && length < minimum {
+			return fmt.Errorf("%s 长度不能小于 %v", path, minimum)
+		}
+		if maximum, valid := schemaNumber(schema["maxLength"]); valid && length > maximum {
+			return fmt.Errorf("%s 长度不能大于 %v", path, maximum)
 		}
 	case "integer":
 		number, ok := runtimeNumber(value)
@@ -655,6 +814,13 @@ func validateSchemaValue(value any, schema map[string]any, path string) error {
 		if !ok {
 			return fmt.Errorf("%s 必须是数组", path)
 		}
+		length := float64(len(items))
+		if minimum, valid := schemaNumber(schema["minItems"]); valid && length < minimum {
+			return fmt.Errorf("%s 项数不能小于 %v", path, minimum)
+		}
+		if maximum, valid := schemaNumber(schema["maxItems"]); valid && length > maximum {
+			return fmt.Errorf("%s 项数不能大于 %v", path, maximum)
+		}
 		if itemSchema, ok := schema["items"].(map[string]any); ok {
 			for index, item := range items {
 				if err := validateSchemaValue(item, itemSchema, fmt.Sprintf("%s[%d]", path, index)); err != nil {
@@ -662,6 +828,16 @@ func validateSchemaValue(value any, schema map[string]any, path string) error {
 				}
 			}
 		}
+	case "null":
+		if value != nil {
+			return fmt.Errorf("%s 必须为空", path)
+		}
+	case "":
+	default:
+		return fmt.Errorf("%s 的参数定义无效", path)
+	}
+	if constant, exists := schema["const"]; exists && !schemaValuesEqual(value, constant) {
+		return fmt.Errorf("%s 不符合固定值约定", path)
 	}
 	if enum, ok := schema["enum"].([]any); ok && len(enum) > 0 {
 		matched := false
@@ -722,6 +898,12 @@ func safeRuntimeError(err error) *PublicError {
 	if errors.As(err, &connectorErr) {
 		return &PublicError{Code: connectorErr.Code, Message: connectorErr.Message, HTTPStatus: connectorErr.HTTPStatus}
 	}
+	if errors.Is(err, model.ErrSearchUpstreamURLHTTPSRequired) {
+		return &PublicError{Code: "UPSTREAM_URL_HTTPS_REQUIRED", Message: "上游服务地址必须使用 HTTPS。", HTTPStatus: http.StatusBadRequest}
+	}
+	if errors.Is(err, model.ErrSearchUpstreamURLInvalid) {
+		return &PublicError{Code: "UPSTREAM_URL_INVALID", Message: "上游服务地址无效。", HTTPStatus: http.StatusBadRequest}
+	}
 	return &PublicError{Code: "VSEARCH_INTERNAL_ERROR", Message: "vSearch 服务暂不可用，请稍后重试。", HTTPStatus: http.StatusInternalServerError}
 }
 
@@ -750,9 +932,6 @@ func sanitizePublicValueWithForbidden(value any, forbidden []string) any {
 		result := make(map[string]any, len(typed))
 		for key, item := range typed {
 			lowerKey := strings.ToLower(key)
-			if strings.Contains(lowerKey, "agentkey") {
-				continue
-			}
 			blockedKey := false
 			for _, secret := range forbidden {
 				secret = strings.TrimSpace(secret)
@@ -782,9 +961,7 @@ func sanitizePublicValueWithForbidden(value any, forbidden []string) any {
 		}
 		return result
 	case string:
-		text := strings.ReplaceAll(typed, "https://api.agentkey.app", "vSearch upstream")
-		text = strings.ReplaceAll(text, "AgentKey", "vSearch upstream")
-		text = strings.ReplaceAll(text, "agentkey", "vSearch upstream")
+		text := typed
 		for _, secret := range forbidden {
 			secret = strings.TrimSpace(secret)
 			if len(secret) >= 3 {

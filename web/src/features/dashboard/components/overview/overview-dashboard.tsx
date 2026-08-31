@@ -66,6 +66,7 @@ import { FAQPanel } from './faq-panel'
 import { PerformanceHealthPanel } from './performance-health-panel'
 import { SummaryCards } from './summary-cards'
 import { UptimePanel } from './uptime-panel'
+import { VSearchCapabilityPanel } from './vsearch-capability-panel'
 
 const SETUP_GUIDE_VISIBILITY_STORAGE_KEY =
   'dashboard_overview_setup_guide_expanded'
@@ -750,6 +751,8 @@ export function OverviewDashboard() {
       )}
 
       <SummaryCards />
+
+      <VSearchCapabilityPanel />
 
       {showContentPanels && (
         <CardStaggerContainer

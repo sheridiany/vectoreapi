@@ -1555,6 +1555,7 @@ func CleanupSubscriptionPreConsumeRecords(olderThanSeconds int64) (int64, error)
 	cutoff := GetDBTimestamp() - olderThanSeconds
 	pendingSearchRequests := DB.Model(&SearchUsageEvent{}).
 		Select("request_id").Where("status = ? OR billing_state IN ?", SearchUsageStatusPending, []string{
+		SearchUsageBillingReservePending, SearchUsageBillingReserved,
 		SearchUsageBillingRefundPending, SearchUsageBillingRefundFailed,
 	})
 	res := DB.Where("updated_at < ? AND request_id NOT IN (?)", cutoff, pendingSearchRequests).

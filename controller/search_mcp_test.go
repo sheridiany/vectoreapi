@@ -95,3 +95,27 @@ func TestVSearchPublicErrorPreservesWrappedIndeterminateError(t *testing.T) {
 
 	assert.Same(t, expected, actual)
 }
+
+func TestSearchMCPToolErrorPreservesRetryAfter(t *testing.T) {
+	context, recorder := newSearchMCPContext(t, `{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{}}`)
+
+	writeSearchMCPToolError(context, float64(6), &vsearch.PublicError{
+		Code: "UPSTREAM_RATE_LIMITED", Message: "上游服务限流。", HTTPStatus: http.StatusTooManyRequests, RetryAfterSeconds: 90,
+	})
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	assert.Equal(t, "90", recorder.Header().Get("Retry-After"))
+	var payload struct {
+		Result struct {
+			StructuredContent struct {
+				Error struct {
+					Code              string `json:"code"`
+					RetryAfterSeconds int    `json:"retry_after_seconds"`
+				} `json:"error"`
+			} `json:"structuredContent"`
+		} `json:"result"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
+	assert.Equal(t, "UPSTREAM_RATE_LIMITED", payload.Result.StructuredContent.Error.Code)
+	assert.Equal(t, 90, payload.Result.StructuredContent.Error.RetryAfterSeconds)
+}

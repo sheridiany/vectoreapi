@@ -10,6 +10,7 @@ import { describe, expect, test } from 'vitest'
 
 import {
   formatCnyMoney,
+  formatMoney,
   formatMicrosForInput,
   parseCnyInputToMicros,
 } from '../money'
@@ -26,6 +27,15 @@ describe('vSearch money formatting', () => {
     expect(formatCnyMoney({ micros: 100 }, 'zh-CN')).toContain('0.0001')
     expect(formatCnyMoney({ micros: 10 }, 'zh-CN')).toContain('0.00001')
     expect(formatCnyMoney({ micros: 1 }, 'zh-CN')).toContain('0.000001')
+  })
+
+  test('shows the upstream balance currency without losing micros', () => {
+    const usd = formatMoney({ micros: 1 }, 'USD', 'en-US')
+    expect(usd).toContain('USD')
+    expect(usd).toContain('0.000001')
+    expect(formatMoney({ micros: 1_250_000 }, 'CREDIT', 'en-US')).toBe(
+      'CREDIT 1.25'
+    )
   })
 
   test('round-trips a six-decimal catalog price without float loss', () => {

@@ -14,6 +14,7 @@ import { Route as authRouteRouteImport } from './routes/(auth)/route'
 import { Route as AuthenticatedRouteRouteImport } from './routes/_authenticated/route'
 import { Route as PrivacyPolicyRouteImport } from './routes/privacy-policy'
 import { Route as UserAgreementRouteImport } from './routes/user-agreement'
+import { Route as VsearchRouteImport } from './routes/vsearch'
 import { Route as authForgotPasswordRouteImport } from './routes/(auth)/forgot-password'
 import { Route as authOauthRouteImport } from './routes/(auth)/oauth'
 import { Route as authOtpRouteImport } from './routes/(auth)/otp'
@@ -76,9 +77,8 @@ import { Route as DocsGuideChatClientsRouteImport } from './routes/docs/guide/ch
 import { Route as DocsGuideRegistrationRouteImport } from './routes/docs/guide/registration'
 import { Route as PricingModelIdIndexRouteImport } from './routes/pricing/$modelId/index'
 import { Route as AuthenticatedEnterpriseAdminRankingsRouteImport } from './routes/_authenticated/enterprise/admin_.rankings'
-import { Route as AuthenticatedSearchAdminAgentKeysRouteImport } from './routes/_authenticated/search/admin_.agent-keys'
 import { Route as AuthenticatedSearchAdminCatalogRouteImport } from './routes/_authenticated/search/admin_.catalog'
-import { Route as AuthenticatedSearchAdminUpstreamAccountsRouteImport } from './routes/_authenticated/search/admin_.upstream-accounts'
+import { Route as AuthenticatedSearchAdminKeysRouteImport } from './routes/_authenticated/search/admin_.keys'
 import { Route as AuthenticatedSearchAdminUsageLogsRouteImport } from './routes/_authenticated/search/admin_.usage-logs'
 import { Route as AuthenticatedSystemSettingsAuthIndexRouteImport } from './routes/_authenticated/system-settings/auth/index'
 import { Route as AuthenticatedSystemSettingsAuthSectionRouteImport } from './routes/_authenticated/system-settings/auth/$section'
@@ -116,6 +116,11 @@ const PrivacyPolicyRoute = PrivacyPolicyRouteImport.update({
 const UserAgreementRoute = UserAgreementRouteImport.update({
   id: '/user-agreement',
   path: '/user-agreement',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const VsearchRoute = VsearchRouteImport.update({
+  id: '/vsearch',
+  path: '/vsearch',
   getParentRoute: () => rootRouteImport,
 } as any)
 const authForgotPasswordRoute = authForgotPasswordRouteImport.update({
@@ -457,22 +462,16 @@ const AuthenticatedEnterpriseAdminRankingsRoute =
     path: '/enterprise/admin/rankings',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
-const AuthenticatedSearchAdminAgentKeysRoute =
-  AuthenticatedSearchAdminAgentKeysRouteImport.update({
-    id: '/search/admin_/agent-keys',
-    path: '/search/admin/agent-keys',
-    getParentRoute: () => AuthenticatedRouteRoute,
-  } as any)
 const AuthenticatedSearchAdminCatalogRoute =
   AuthenticatedSearchAdminCatalogRouteImport.update({
     id: '/search/admin_/catalog',
     path: '/search/admin/catalog',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
-const AuthenticatedSearchAdminUpstreamAccountsRoute =
-  AuthenticatedSearchAdminUpstreamAccountsRouteImport.update({
-    id: '/search/admin_/upstream-accounts',
-    path: '/search/admin/upstream-accounts',
+const AuthenticatedSearchAdminKeysRoute =
+  AuthenticatedSearchAdminKeysRouteImport.update({
+    id: '/search/admin_/keys',
+    path: '/search/admin/keys',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
 const AuthenticatedSearchAdminUsageLogsRoute =
@@ -570,6 +569,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/privacy-policy': typeof PrivacyPolicyRoute
   '/user-agreement': typeof UserAgreementRoute
+  '/vsearch': typeof VsearchRoute
   '/system-settings': typeof AuthenticatedSystemSettingsRouteRouteWithChildren
   '/forgot-password': typeof authForgotPasswordRoute
   '/oauth': typeof authOauthRoute
@@ -632,9 +632,8 @@ export interface FileRoutesByFullPath {
   '/docs/guide/': typeof DocsGuideIndexRoute
   '/pricing/$modelId/': typeof PricingModelIdIndexRoute
   '/enterprise/admin/rankings': typeof AuthenticatedEnterpriseAdminRankingsRoute
-  '/search/admin/agent-keys': typeof AuthenticatedSearchAdminAgentKeysRoute
   '/search/admin/catalog': typeof AuthenticatedSearchAdminCatalogRoute
-  '/search/admin/upstream-accounts': typeof AuthenticatedSearchAdminUpstreamAccountsRoute
+  '/search/admin/keys': typeof AuthenticatedSearchAdminKeysRoute
   '/search/admin/usage-logs': typeof AuthenticatedSearchAdminUsageLogsRoute
   '/system-settings/auth/$section': typeof AuthenticatedSystemSettingsAuthSectionRoute
   '/system-settings/billing/$section': typeof AuthenticatedSystemSettingsBillingSectionRoute
@@ -655,6 +654,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/privacy-policy': typeof PrivacyPolicyRoute
   '/user-agreement': typeof UserAgreementRoute
+  '/vsearch': typeof VsearchRoute
   '/forgot-password': typeof authForgotPasswordRoute
   '/oauth': typeof authOauthRoute
   '/otp': typeof authOtpRoute
@@ -716,9 +716,8 @@ export interface FileRoutesByTo {
   '/docs/guide': typeof DocsGuideIndexRoute
   '/pricing/$modelId': typeof PricingModelIdIndexRoute
   '/enterprise/admin/rankings': typeof AuthenticatedEnterpriseAdminRankingsRoute
-  '/search/admin/agent-keys': typeof AuthenticatedSearchAdminAgentKeysRoute
   '/search/admin/catalog': typeof AuthenticatedSearchAdminCatalogRoute
-  '/search/admin/upstream-accounts': typeof AuthenticatedSearchAdminUpstreamAccountsRoute
+  '/search/admin/keys': typeof AuthenticatedSearchAdminKeysRoute
   '/search/admin/usage-logs': typeof AuthenticatedSearchAdminUsageLogsRoute
   '/system-settings/auth/$section': typeof AuthenticatedSystemSettingsAuthSectionRoute
   '/system-settings/billing/$section': typeof AuthenticatedSystemSettingsBillingSectionRoute
@@ -742,6 +741,7 @@ export interface FileRoutesById {
   '/_authenticated': typeof AuthenticatedRouteRouteWithChildren
   '/privacy-policy': typeof PrivacyPolicyRoute
   '/user-agreement': typeof UserAgreementRoute
+  '/vsearch': typeof VsearchRoute
   '/_authenticated/system-settings': typeof AuthenticatedSystemSettingsRouteRouteWithChildren
   '/(auth)/forgot-password': typeof authForgotPasswordRoute
   '/(auth)/oauth': typeof authOauthRoute
@@ -804,9 +804,8 @@ export interface FileRoutesById {
   '/docs/guide/': typeof DocsGuideIndexRoute
   '/pricing/$modelId/': typeof PricingModelIdIndexRoute
   '/_authenticated/enterprise/admin_/rankings': typeof AuthenticatedEnterpriseAdminRankingsRoute
-  '/_authenticated/search/admin_/agent-keys': typeof AuthenticatedSearchAdminAgentKeysRoute
   '/_authenticated/search/admin_/catalog': typeof AuthenticatedSearchAdminCatalogRoute
-  '/_authenticated/search/admin_/upstream-accounts': typeof AuthenticatedSearchAdminUpstreamAccountsRoute
+  '/_authenticated/search/admin_/keys': typeof AuthenticatedSearchAdminKeysRoute
   '/_authenticated/search/admin_/usage-logs': typeof AuthenticatedSearchAdminUsageLogsRoute
   '/_authenticated/system-settings/auth/$section': typeof AuthenticatedSystemSettingsAuthSectionRoute
   '/_authenticated/system-settings/billing/$section': typeof AuthenticatedSystemSettingsBillingSectionRoute
@@ -829,6 +828,7 @@ export interface FileRouteTypes {
     | '/'
     | '/privacy-policy'
     | '/user-agreement'
+    | '/vsearch'
     | '/system-settings'
     | '/forgot-password'
     | '/oauth'
@@ -891,9 +891,8 @@ export interface FileRouteTypes {
     | '/docs/guide/'
     | '/pricing/$modelId/'
     | '/enterprise/admin/rankings'
-    | '/search/admin/agent-keys'
     | '/search/admin/catalog'
-    | '/search/admin/upstream-accounts'
+    | '/search/admin/keys'
     | '/search/admin/usage-logs'
     | '/system-settings/auth/$section'
     | '/system-settings/billing/$section'
@@ -914,6 +913,7 @@ export interface FileRouteTypes {
     | '/'
     | '/privacy-policy'
     | '/user-agreement'
+    | '/vsearch'
     | '/forgot-password'
     | '/oauth'
     | '/otp'
@@ -975,9 +975,8 @@ export interface FileRouteTypes {
     | '/docs/guide'
     | '/pricing/$modelId'
     | '/enterprise/admin/rankings'
-    | '/search/admin/agent-keys'
     | '/search/admin/catalog'
-    | '/search/admin/upstream-accounts'
+    | '/search/admin/keys'
     | '/search/admin/usage-logs'
     | '/system-settings/auth/$section'
     | '/system-settings/billing/$section'
@@ -1000,6 +999,7 @@ export interface FileRouteTypes {
     | '/_authenticated'
     | '/privacy-policy'
     | '/user-agreement'
+    | '/vsearch'
     | '/_authenticated/system-settings'
     | '/(auth)/forgot-password'
     | '/(auth)/oauth'
@@ -1062,9 +1062,8 @@ export interface FileRouteTypes {
     | '/docs/guide/'
     | '/pricing/$modelId/'
     | '/_authenticated/enterprise/admin_/rankings'
-    | '/_authenticated/search/admin_/agent-keys'
     | '/_authenticated/search/admin_/catalog'
-    | '/_authenticated/search/admin_/upstream-accounts'
+    | '/_authenticated/search/admin_/keys'
     | '/_authenticated/search/admin_/usage-logs'
     | '/_authenticated/system-settings/auth/$section'
     | '/_authenticated/system-settings/billing/$section'
@@ -1088,6 +1087,7 @@ export interface RootRouteChildren {
   AuthenticatedRouteRoute: typeof AuthenticatedRouteRouteWithChildren
   PrivacyPolicyRoute: typeof PrivacyPolicyRoute
   UserAgreementRoute: typeof UserAgreementRoute
+  VsearchRoute: typeof VsearchRoute
   errors401Route: typeof errors401Route
   errors403Route: typeof errors403Route
   errors404Route: typeof errors404Route
@@ -1144,6 +1144,13 @@ declare module '@tanstack/react-router' {
       path: '/user-agreement'
       fullPath: '/user-agreement'
       preLoaderRoute: typeof UserAgreementRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/vsearch': {
+      id: '/vsearch'
+      path: '/vsearch'
+      fullPath: '/vsearch'
+      preLoaderRoute: typeof VsearchRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/(auth)/forgot-password': {
@@ -1580,13 +1587,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedEnterpriseAdminRankingsRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
-    '/_authenticated/search/admin_/agent-keys': {
-      id: '/_authenticated/search/admin_/agent-keys'
-      path: '/search/admin/agent-keys'
-      fullPath: '/search/admin/agent-keys'
-      preLoaderRoute: typeof AuthenticatedSearchAdminAgentKeysRouteImport
-      parentRoute: typeof AuthenticatedRouteRoute
-    }
     '/_authenticated/search/admin_/catalog': {
       id: '/_authenticated/search/admin_/catalog'
       path: '/search/admin/catalog'
@@ -1594,11 +1594,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedSearchAdminCatalogRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
-    '/_authenticated/search/admin_/upstream-accounts': {
-      id: '/_authenticated/search/admin_/upstream-accounts'
-      path: '/search/admin/upstream-accounts'
-      fullPath: '/search/admin/upstream-accounts'
-      preLoaderRoute: typeof AuthenticatedSearchAdminUpstreamAccountsRouteImport
+    '/_authenticated/search/admin_/keys': {
+      id: '/_authenticated/search/admin_/keys'
+      path: '/search/admin/keys'
+      fullPath: '/search/admin/keys'
+      preLoaderRoute: typeof AuthenticatedSearchAdminKeysRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/search/admin_/usage-logs': {
@@ -1827,9 +1827,8 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedUsersIndexRoute: typeof AuthenticatedUsersIndexRoute
   AuthenticatedWalletIndexRoute: typeof AuthenticatedWalletIndexRoute
   AuthenticatedEnterpriseAdminRankingsRoute: typeof AuthenticatedEnterpriseAdminRankingsRoute
-  AuthenticatedSearchAdminAgentKeysRoute: typeof AuthenticatedSearchAdminAgentKeysRoute
   AuthenticatedSearchAdminCatalogRoute: typeof AuthenticatedSearchAdminCatalogRoute
-  AuthenticatedSearchAdminUpstreamAccountsRoute: typeof AuthenticatedSearchAdminUpstreamAccountsRoute
+  AuthenticatedSearchAdminKeysRoute: typeof AuthenticatedSearchAdminKeysRoute
   AuthenticatedSearchAdminUsageLogsRoute: typeof AuthenticatedSearchAdminUsageLogsRoute
 }
 
@@ -1872,11 +1871,8 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedWalletIndexRoute: AuthenticatedWalletIndexRoute,
   AuthenticatedEnterpriseAdminRankingsRoute:
     AuthenticatedEnterpriseAdminRankingsRoute,
-  AuthenticatedSearchAdminAgentKeysRoute:
-    AuthenticatedSearchAdminAgentKeysRoute,
   AuthenticatedSearchAdminCatalogRoute: AuthenticatedSearchAdminCatalogRoute,
-  AuthenticatedSearchAdminUpstreamAccountsRoute:
-    AuthenticatedSearchAdminUpstreamAccountsRoute,
+  AuthenticatedSearchAdminKeysRoute: AuthenticatedSearchAdminKeysRoute,
   AuthenticatedSearchAdminUsageLogsRoute:
     AuthenticatedSearchAdminUsageLogsRoute,
 }
@@ -1890,6 +1886,7 @@ const rootRouteChildren: RootRouteChildren = {
   AuthenticatedRouteRoute: AuthenticatedRouteRouteWithChildren,
   PrivacyPolicyRoute: PrivacyPolicyRoute,
   UserAgreementRoute: UserAgreementRoute,
+  VsearchRoute: VsearchRoute,
   errors401Route: errors401Route,
   errors403Route: errors403Route,
   errors404Route: errors404Route,
