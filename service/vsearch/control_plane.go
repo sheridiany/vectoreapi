@@ -308,6 +308,11 @@ func (control *ControlPlane) SyncCatalog(ctx context.Context) (SyncResult, error
 				result.Skipped++
 				continue
 			}
+			normalizedCostMicros, normalizedCostCurrency, costErr := searchUpstreamCostToCNY(operation.CostAmountMicros, operation.CostCurrency)
+			if costErr != nil {
+				result.Failures = append(result.Failures, account.Name+"：上游价格换算失败")
+				continue
+			}
 			publicID, idErr := model.GenerateSearchCapabilityPublicID(definition.OperationKey + "@" + definition.ContractVersion)
 			if idErr != nil {
 				result.Failures = append(result.Failures, account.Name+"：标准能力标识生成失败")
@@ -326,7 +331,7 @@ func (control *ControlPlane) SyncCatalog(ctx context.Context) (SyncResult, error
 				Name: definition.Name, Category: definition.Category, Description: definition.Description,
 				InputSchema: string(inputSchema), OutputSchema: string(outputSchema), SchemaStatus: model.SearchCapabilitySchemaAvailable,
 				Status: model.SearchCapabilityStatusDisabled, AvailabilitySource: model.SearchCapabilityAvailabilityUpstream,
-				UpstreamCostMicros: operation.CostAmountMicros, PriceMicros: operation.CostAmountMicros, LastSyncedAt: syncedAt,
+				UpstreamCostMicros: normalizedCostMicros, PriceMicros: normalizedCostMicros, LastSyncedAt: syncedAt,
 			}
 			if upsertErr := model.UpsertDiscoveredSearchCapability(capability); upsertErr != nil {
 				result.Failures = append(result.Failures, account.Name+"：标准能力保存失败")
@@ -337,6 +342,12 @@ func (control *ControlPlane) SyncCatalog(ctx context.Context) (SyncResult, error
 				result.Failures = append(result.Failures, account.Name+"：标准能力读取失败")
 				continue
 			}
+			if operation.ContractEquivalent && operation.BillingReady && persisted.AvailabilitySource != model.SearchCapabilityAvailabilityManual {
+				if priceErr := model.ConfigureSearchCapability(persisted.Id, persisted.Status, normalizedCostMicros, false); priceErr != nil {
+					result.Failures = append(result.Failures, account.Name+"：标准能力同价设置失败")
+					continue
+				}
+			}
 			binding := &model.SearchCapabilityBinding{
 				CapabilityID: persisted.Id, UpstreamAccountID: account.Id, ToolName: operation.OperationID,
 				Platform: operation.Platform, ProviderOperationID: operation.OperationID,
@@ -344,10 +355,10 @@ func (control *ControlPlane) SyncCatalog(ctx context.Context) (SyncResult, error
 				MappingKey: operation.MappingKey, MappingVersion: operation.MappingVersion,
 				ParameterMap: string(parameterMap), FixedParams: string(fixedParams),
 				InputSchema: string(inputSchema), OutputSchema: string(outputSchema),
-				CostCurrency: operation.CostCurrency, ContractEquivalent: operation.ContractEquivalent,
+				CostCurrency: normalizedCostCurrency, ContractEquivalent: operation.ContractEquivalent,
 				BillingReady: operation.BillingReady,
 				Status:       model.SearchCapabilityBindingStatusEnabled, Weight: account.Weight, Priority: account.Priority,
-				UpstreamCostMicros: operation.CostAmountMicros, LastSyncedAt: syncedAt,
+				UpstreamCostMicros: normalizedCostMicros, LastSyncedAt: syncedAt,
 			}
 			if bindingErr := model.UpsertSearchCapabilityBinding(binding); bindingErr != nil {
 				result.Failures = append(result.Failures, account.Name+"：标准能力绑定失败")
@@ -368,7 +379,7 @@ func (control *ControlPlane) SyncCatalog(ctx context.Context) (SyncResult, error
 	}
 	sort.Strings(result.SyncedServiceIDs)
 	if result.Synced == 0 {
-		return result, &PublicError{Code: "CATALOG_SYNC_FAILED", Message: "没有同步到标准能力，请检查 JustOneAPI 或 TikHub 账号配置。", HTTPStatus: http.StatusBadGateway}
+		return result, &PublicError{Code: "CATALOG_SYNC_FAILED", Message: "没有同步到标准能力，请检查 TikHub 账号配置。", HTTPStatus: http.StatusBadGateway}
 	}
 	result.Services, err = control.runtime.ListCatalog(ctx, Principal{}, true)
 	return result, err

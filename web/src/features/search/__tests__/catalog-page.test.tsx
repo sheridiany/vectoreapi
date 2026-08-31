@@ -60,7 +60,20 @@ describe('vSearch capability page', () => {
         enabled: true,
         interface_count: 3,
         available_interface_count: 2,
-        supported_platforms: ['TikTok', 'Douyin'],
+        supported_platforms: [
+          'TikTok',
+          'Douyin',
+          'Xiaohongshu',
+          'tiktok_shop',
+          'Weibo',
+          'wechat_mp',
+          'wechat_channels',
+          'YouTube',
+          'Reddit',
+          'LinkedIn',
+        ],
+        request_parameters: ['platform', 'query'],
+        information_fields: ['title', 'rank', 'score'],
         recent_latency_ms: 280,
         price_min_micros: 1,
         price_max_micros: 1,
@@ -89,19 +102,38 @@ describe('vSearch capability page', () => {
       screen.getAllByText((content) => content.includes('0.000001')).length
     ).toBeGreaterThan(0)
     expect(screen.queryByRole('tablist')).not.toBeInTheDocument()
+    expect(screen.getAllByText('Accessible information').length).toBe(2)
+    expect(screen.getByText('Keyword')).toBeInTheDocument()
+    expect(screen.getByText('Popularity')).toBeInTheDocument()
+    const platformFilters = screen.getByRole('group', {
+      name: 'Catalog platforms',
+    })
+    for (const label of [
+      '微博',
+      '微信公众号',
+      '微信视频号',
+      'YouTube',
+      'Reddit',
+      'LinkedIn',
+    ]) {
+      expect(platformFilters).toHaveTextContent(label)
+    }
+    expect(
+      screen.getByText('Information contract pending verification')
+    ).toBeInTheDocument()
     expect(
       screen.queryByRole('navigation', { name: 'Search navigation' })
     ).not.toBeInTheDocument()
   })
 
-  test('filters live capabilities by category and search term', async () => {
+  test('filters live capabilities by platform and search term', async () => {
     const user = userEvent.setup()
     renderCatalog()
 
     await screen.findByText('Brave Search')
-    await user.click(screen.getByRole('button', { name: 'Extract' }))
-    expect(screen.getByText('Firecrawl')).toBeInTheDocument()
-    expect(screen.queryByText('Brave Search')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '抖音' }))
+    expect(screen.getByText('Brave Search')).toBeInTheDocument()
+    expect(screen.queryByText('Firecrawl')).not.toBeInTheDocument()
 
     await user.type(
       screen.getByRole('textbox', { name: 'Search capability catalog' }),
@@ -168,11 +200,12 @@ describe('vSearch capability page', () => {
 
     expect(await screen.findByText('Available capability')).toBeInTheDocument()
     expect(screen.getByText('Preparing')).toBeInTheDocument()
+    expect(screen.getAllByText('Planned information')).toHaveLength(2)
     expect(screen.getByText('Temporarily unavailable')).toBeInTheDocument()
-    expect(screen.getByText('TikTok')).toBeInTheDocument()
-    expect(screen.getByText('抖音')).toBeInTheDocument()
-    expect(screen.getByText('Reddit')).toBeInTheDocument()
-    expect(screen.getByText('LinkedIn')).toBeInTheDocument()
+    expect(screen.getAllByText('TikTok').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('抖音').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('Reddit').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('LinkedIn').length).toBeGreaterThan(0)
     expect(
       screen.getByText('Cataloged interfaces').parentElement
     ).toHaveTextContent('6')

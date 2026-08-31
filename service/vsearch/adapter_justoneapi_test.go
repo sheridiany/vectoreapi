@@ -443,22 +443,14 @@ func TestJustOneAPIAdapterProbeIsExplicitlyUnsupported(t *testing.T) {
 	assert.Equal(t, "UPSTREAM_PROBE_UNSUPPORTED", connectorErr.Code)
 }
 
-func TestJustOneAPIAdapterUsesReviewedCatalogSnapshot(t *testing.T) {
+func TestJustOneAPIAdapterDoesNotPublishStandardCatalogBindings(t *testing.T) {
 	adapter := newJustOneTestAdapter(t, "http://127.0.0.1:8080", nil)
 	snapshot, err := adapter.SnapshotCatalog(context.Background())
 	require.NoError(t, err)
 	assert.Equal(t, ProviderJustOneAPI, snapshot.Provider)
 	assert.NotEmpty(t, snapshot.Version)
 	assert.NotEmpty(t, snapshot.SchemaHash)
-	require.NotEmpty(t, snapshot.Operations)
-	for _, operation := range snapshot.Operations {
-		assert.Equal(t, justOneAPIDirectMappingKey, operation.MappingKey)
-		assert.Empty(t, operation.CostCurrency)
-		assert.False(t, operation.ContractEquivalent)
-		assert.False(t, operation.BillingReady)
-		assert.NotEmpty(t, operation.Method)
-		assert.NotEmpty(t, operation.Path)
-	}
+	assert.Empty(t, snapshot.Operations)
 }
 
 func TestNewJustOneAPIAdapterValidatesURLAndSecret(t *testing.T) {

@@ -56,6 +56,8 @@ export type SearchCatalogItem = {
   interface_count: number
   available_interface_count?: number
   supported_platforms?: string[]
+  request_parameters?: string[]
+  information_fields?: string[]
   healthy_route_count?: number
   cost_label?: string
   recent_latency_ms?: number | null

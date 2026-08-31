@@ -249,6 +249,11 @@ func normalizeTikHubTrendList(data json.RawMessage, platform string) (map[string
 	if err := common.Unmarshal(data, &payload); err != nil {
 		return nil, newConnectorError("UPSTREAM_CONTRACT_MISMATCH", http.StatusBadGateway, "上游服务返回的数据不符合能力约定。")
 	}
+	if nested, exists := payload["data"]; exists && common.GetJsonType(nested) == "object" {
+		if err := common.Unmarshal(nested, &payload); err != nil {
+			return nil, newConnectorError("UPSTREAM_CONTRACT_MISMATCH", http.StatusBadGateway, "上游服务返回的数据不符合能力约定。")
+		}
+	}
 	wordList, ok := payload["word_list"]
 	if !ok || common.GetJsonType(wordList) != "array" {
 		return nil, newConnectorError("UPSTREAM_CONTRACT_MISMATCH", http.StatusBadGateway, "上游服务返回的数据不符合能力约定。")
@@ -264,9 +269,16 @@ func normalizeTikHubTrendList(data json.RawMessage, platform string) (map[string
 		if !validID || common.Unmarshal(entry["word"], &title) != nil || strings.TrimSpace(title) == "" {
 			return nil, newConnectorError("UPSTREAM_CONTRACT_MISMATCH", http.StatusBadGateway, "上游服务返回的数据不符合能力约定。")
 		}
+		rank := index + 1
+		if rankRaw, exists := entry["position"]; exists {
+			var upstreamRank int
+			if common.Unmarshal(rankRaw, &upstreamRank) == nil && upstreamRank > 0 {
+				rank = upstreamRank
+			}
+		}
 		item := map[string]any{
 			"id": id, "type": "trend", "platform": platform,
-			"title": title, "rank": index + 1,
+			"title": title, "rank": rank,
 		}
 		if scoreRaw, exists := entry["hot_value"]; exists {
 			var score float64

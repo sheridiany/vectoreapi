@@ -10,10 +10,16 @@ the Free Software Foundation, either version 3 of the License, or
 const PLATFORM_LABELS: Record<string, string> = {
   douyin: '抖音',
   instagram: 'Instagram',
+  linkedin: 'LinkedIn',
+  reddit: 'Reddit',
   taobao: '淘宝',
   tiktok: 'TikTok',
   tiktok_shop: 'TikTok Shop',
+  wechat_channels: '微信视频号',
+  wechat_mp: '微信公众号',
+  weibo: '微博',
   xiaohongshu: '小红书',
+  youtube: 'YouTube',
 }
 
 export function formatVSearchPlatformLabel(platform: string) {

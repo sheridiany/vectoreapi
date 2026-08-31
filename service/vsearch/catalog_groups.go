@@ -9,6 +9,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 )
 
@@ -20,6 +21,8 @@ type PublicCatalogGroup struct {
 	Status                  string   `json:"status"`
 	Enabled                 bool     `json:"enabled"`
 	SupportedPlatforms      []string `json:"supported_platforms"`
+	RequestParameters       []string `json:"request_parameters"`
+	InformationFields       []string `json:"information_fields"`
 	InterfaceCount          int64    `json:"interface_count"`
 	AvailableInterfaceCount int64    `json:"available_interface_count"`
 	CostLabel               string   `json:"cost_label"`
@@ -37,6 +40,8 @@ type catalogGroupAccumulator struct {
 	visibleTools map[string]struct{}
 	callable     map[string]struct{}
 	platforms    map[string]struct{}
+	parameters   map[string]struct{}
+	information  map[string]struct{}
 	prices       []int64
 	published    bool
 	lastSyncedAt int64
@@ -155,6 +160,7 @@ func productCatalogGroups(catalog []catalogSnapshotItem) []PublicCatalogGroup {
 			group = &catalogGroupAccumulator{
 				key: groupKey, label: label, categories: make(map[string]int), descriptions: make(map[string]int),
 				visibleTools: make(map[string]struct{}), callable: make(map[string]struct{}), platforms: make(map[string]struct{}),
+				parameters: make(map[string]struct{}), information: make(map[string]struct{}),
 				prices: make([]int64, 0),
 			}
 			groups[groupKey] = group
@@ -176,6 +182,12 @@ func productCatalogGroups(catalog []catalogSnapshotItem) []PublicCatalogGroup {
 			if platform := strings.ToLower(strings.TrimSpace(binding.Platform)); platform != "" {
 				group.platforms[platform] = struct{}{}
 			}
+		}
+		for _, parameter := range catalogSchemaFields(capability.InputSchema, false) {
+			group.parameters[parameter] = struct{}{}
+		}
+		for _, field := range catalogSchemaFields(capability.OutputSchema, true) {
+			group.information[field] = struct{}{}
 		}
 		group.published = group.published || capability.Status == model.SearchCapabilityStatusEnabled
 		group.categories[item.Category]++
@@ -229,6 +241,8 @@ func productCatalogGroups(catalog []catalogSnapshotItem) []PublicCatalogGroup {
 			platforms = append(platforms, platform)
 		}
 		sort.Strings(platforms)
+		parameters := sortedCatalogSet(group.parameters)
+		information := sortedCatalogSet(group.information)
 		costLabel := catalogPriceLabel(minPrice, maxPrice)
 		if !group.published {
 			costLabel = ""
@@ -238,6 +252,7 @@ func productCatalogGroups(catalog []catalogSnapshotItem) []PublicCatalogGroup {
 		result = append(result, PublicCatalogGroup{
 			ID: catalogGroupPublicID(group.key), Name: name, Category: category, Description: description,
 			Status: status, Enabled: available, SupportedPlatforms: platforms,
+			RequestParameters: parameters, InformationFields: information,
 			InterfaceCount: int64(len(group.visibleTools)), AvailableInterfaceCount: int64(len(group.callable)),
 			CostLabel: costLabel, PriceMinMicros: minPrice, PriceMaxMicros: maxPrice,
 			LastSyncedAt: group.lastSyncedAt,
@@ -249,6 +264,41 @@ func productCatalogGroups(catalog []catalogSnapshotItem) []PublicCatalogGroup {
 		}
 		return result[i].Category < result[j].Category
 	})
+	return result
+}
+
+func catalogSchemaFields(raw string, useListItem bool) []string {
+	var schema map[string]any
+	if common.UnmarshalJsonStr(raw, &schema) != nil {
+		return nil
+	}
+	properties, ok := schema["properties"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	if useListItem {
+		if itemsProperty, exists := properties["items"].(map[string]any); exists {
+			if itemSchema, exists := itemsProperty["items"].(map[string]any); exists {
+				if itemProperties, exists := itemSchema["properties"].(map[string]any); exists {
+					properties = itemProperties
+				}
+			}
+		}
+	}
+	fields := make([]string, 0, len(properties))
+	for field := range properties {
+		fields = append(fields, field)
+	}
+	sort.Strings(fields)
+	return fields
+}
+
+func sortedCatalogSet(values map[string]struct{}) []string {
+	result := make([]string, 0, len(values))
+	for value := range values {
+		result = append(result, value)
+	}
+	sort.Strings(result)
 	return result
 }
 

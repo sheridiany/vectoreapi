@@ -19,6 +19,31 @@ import (
 
 const searchMoneyMicrosPerCNY = int64(1_000_000)
 
+func searchUpstreamCostToCNY(costMicros int64, currency string) (int64, string, error) {
+	if costMicros < 0 || costMicros > maxSearchMoneyMicros {
+		return 0, "", fmt.Errorf("vSearch upstream cost is invalid: %d", costMicros)
+	}
+	currency = strings.ToUpper(strings.TrimSpace(currency))
+	switch currency {
+	case "":
+		return costMicros, "", nil
+	case "CNY":
+		return costMicros, "CNY", nil
+	case "USD":
+		rate := operation_setting.USDExchangeRate
+		if rate <= 0 || math.IsNaN(rate) || math.IsInf(rate, 0) {
+			return 0, "", searchBillingConfigError("USDExchangeRate")
+		}
+		converted := decimal.NewFromInt(costMicros).Mul(decimal.NewFromFloat(rate)).Round(0)
+		if converted.IsNegative() || converted.GreaterThan(decimal.NewFromInt(maxSearchMoneyMicros)) {
+			return 0, "", fmt.Errorf("converted vSearch upstream cost is invalid")
+		}
+		return converted.IntPart(), "CNY", nil
+	default:
+		return 0, "", fmt.Errorf("unsupported vSearch upstream currency: %s", currency)
+	}
+}
+
 type executionCharge interface {
 	commit() error
 	refund(context.Context) error

@@ -151,6 +151,8 @@ func TestProductCatalogShowsCanonicalDraftWithDeclaredPlatformsWithoutMakingItEx
 	assert.Equal(t, int64(2), userCatalog[0].InterfaceCount)
 	assert.Zero(t, userCatalog[0].AvailableInterfaceCount)
 	assert.Equal(t, []string{"instagram", "tiktok"}, userCatalog[0].SupportedPlatforms)
+	assert.Empty(t, userCatalog[0].RequestParameters)
+	assert.Empty(t, userCatalog[0].InformationFields)
 	assert.Empty(t, userCatalog[0].CostLabel, "draft upstream cost must not be presented as a user price")
 	assert.Zero(t, userCatalog[0].PriceMinMicros)
 	assert.Zero(t, userCatalog[0].PriceMaxMicros)
@@ -168,6 +170,32 @@ func TestProductCatalogShowsCanonicalDraftWithDeclaredPlatformsWithoutMakingItEx
 	discovery, err := runtime.Discover(context.Background(), Principal{EnterpriseID: 12}, "社交账号")
 	require.NoError(t, err)
 	assert.Empty(t, discovery.Tools, "draft product entries must remain unavailable to execution discovery")
+}
+
+func TestProductCatalogExplainsCanonicalRequestAndInformationFields(t *testing.T) {
+	inputSchema, err := common.Marshal(objectInputSchema(map[string]any{
+		"platform": stringSchema([]any{"douyin"}),
+	}, []any{"platform"}))
+	require.NoError(t, err)
+	outputSchema, err := common.Marshal(trendListOutputSchema())
+	require.NoError(t, err)
+	publicID, err := model.GenerateSearchCapabilityPublicID("social.trend.list@v1")
+	require.NoError(t, err)
+	groups := productCatalogGroups([]catalogSnapshotItem{{
+		capability: &model.SearchCapability{
+			PublicID: publicID, OperationKey: "social.trend.list", ContractVersion: "v1",
+			Name: "平台趋势榜", Category: "社交媒体", InputSchema: string(inputSchema), OutputSchema: string(outputSchema),
+		},
+		declaredBindings: []*model.SearchCapabilityBinding{{Platform: "douyin", Status: model.SearchCapabilityBindingStatusEnabled}},
+	}})
+
+	require.Len(t, groups, 1)
+	assert.Equal(t, []string{"platform"}, groups[0].RequestParameters)
+	assert.Equal(t, []string{"id", "platform", "rank", "score", "title", "type", "url"}, groups[0].InformationFields)
+	payload, err := common.Marshal(groups)
+	require.NoError(t, err)
+	assert.NotContains(t, string(payload), "input_schema")
+	assert.NotContains(t, string(payload), "output_schema")
 }
 
 func TestProductCatalogCountsOnlyExecutableNonJustOneAPIInterfaces(t *testing.T) {

@@ -45,14 +45,12 @@ func TestStandardCapabilityRegistryPinsStablePublicIDs(t *testing.T) {
 	}
 }
 
-func TestStandardCapabilityRegistryContainsOnlyReviewedProvidersAndSafeGETBindings(t *testing.T) {
+func TestStandardCapabilityRegistryContainsOnlyTikHubAndSafeHTTPBindings(t *testing.T) {
 	allowedProviders := map[string]string{
-		justOneAPIDirectMappingKey: ProviderJustOneAPI,
-		tikHubDirectMappingKey:     ProviderTikHub,
+		tikHubDirectMappingKey: ProviderTikHub,
 	}
 	wantAuth := map[string]string{
-		ProviderJustOneAPI: AuthPlacementQuery,
-		ProviderTikHub:     AuthPlacementBearer,
+		ProviderTikHub: AuthPlacementBearer,
 	}
 	seenProviders := make(map[string]struct{}, len(allowedProviders))
 	seenOperations := make(map[string]struct{})
@@ -68,13 +66,17 @@ func TestStandardCapabilityRegistryContainsOnlyReviewedProvidersAndSafeGETBindin
 			} else {
 				assert.Empty(t, operation.CostCurrency, operation.OperationID)
 			}
-			assert.False(t, operation.ContractEquivalent, operation.OperationID)
-			assert.False(t, operation.BillingReady, operation.OperationID)
+			verifiedTrend := operation.OperationKey == "social.trend.list" && operation.Platform == "douyin"
+			assert.Equal(t, verifiedTrend, operation.ContractEquivalent, operation.OperationID)
+			assert.Equal(t, verifiedTrend, operation.BillingReady, operation.OperationID)
+			if verifiedTrend {
+				assert.Equal(t, int64(2_000), operation.CostAmountMicros, operation.OperationID)
+			}
 			seenProviders[provider] = struct{}{}
 
 			assert.Equal(t, definition.OperationKey, operation.OperationKey)
 			assert.Equal(t, definition.ContractVersion, operation.ContractVersion)
-			assert.Equal(t, http.MethodGet, operation.Method, operation.OperationID)
+			assert.Contains(t, []string{http.MethodGet, http.MethodPost}, operation.Method, operation.OperationID)
 			assert.Equal(t, "v1", operation.MappingVersion, operation.OperationID)
 			assert.Equal(t, wantAuth[provider], operation.AuthPlacement, operation.OperationID)
 			assert.NotEmpty(t, operation.Platform, operation.OperationID)
@@ -97,13 +99,14 @@ func TestStandardCapabilityRegistryContainsOnlyReviewedProvidersAndSafeGETBindin
 			assert.NotContains(t, operation.Path, "{", operation.OperationID)
 			assert.NotContains(t, operation.Path, "}", operation.OperationID)
 
-			identity := provider + "|" + operation.OperationID
+			identity := provider + "|" + operation.OperationKey + "|" + operation.OperationID
 			_, duplicate := seenOperations[identity]
 			assert.False(t, duplicate, identity)
 			seenOperations[identity] = struct{}{}
 		}
 	}
-	assert.Equal(t, map[string]struct{}{ProviderJustOneAPI: {}, ProviderTikHub: {}}, seenProviders)
+	assert.Equal(t, map[string]struct{}{ProviderTikHub: {}}, seenProviders)
+	assert.Empty(t, standardProviderOperations(ProviderJustOneAPI))
 	assert.Empty(t, standardProviderOperations("agentkey_mcp"))
 	assert.Empty(t, providerForMapping("agentkey_mcp"))
 }
@@ -116,7 +119,9 @@ func TestStandardCapabilityRegistryOnlyMapsWhitelistedCanonicalParameters(t *tes
 		"username": {}, "uniqueId": {}, "secUid": {}, "maxCursor": {}, "noteId": {}, "keyword": {},
 		"count": {}, "offset": {}, "page": {}, "ai_mode": {}, "sort": {}, "aweme_id": {}, "cursor": {},
 		"item_id": {}, "comment_id": {}, "search_word": {}, "itemId": {}, "product_id": {}, "sku_id": {},
-		"page_start": {}, "page_size": {},
+		"page_start": {}, "page_size": {}, "uid": {}, "raw": {}, "channel_id": {}, "url": {}, "id": {}, "query": {},
+		"object_id": {}, "post_id": {}, "urn": {}, "business_type": {}, "continuation_token": {},
+		"need_format": {}, "type": {}, "search_type": {}, "allow_nsfw": {}, "video_id": {}, "content_id": {},
 	}
 	for _, definition := range standardCapabilityRegistry() {
 		properties, ok := definition.InputSchema["properties"].(map[string]any)
@@ -166,22 +171,27 @@ func TestStandardCapabilityRegistryOnlyMapsWhitelistedCanonicalParameters(t *tes
 	}
 }
 
-func TestJustOneHotSearchIsClassifiedAsContentSearch(t *testing.T) {
-	var matched []ProviderOperation
+func TestStandardCapabilityRegistryPublishesReviewedPlatformSet(t *testing.T) {
+	platforms := make(map[string]struct{})
 	for _, definition := range standardCapabilityRegistry() {
 		for _, operation := range definition.Bindings {
-			if operation.MappingKey == justOneAPIDirectMappingKey && operation.Path == "/api/douyin/hot-search/v1" {
-				matched = append(matched, operation)
-			}
+			platforms[operation.Platform] = struct{}{}
 		}
 	}
+	assert.Equal(t, map[string]struct{}{
+		"douyin": {}, "tiktok": {}, "xiaohongshu": {}, "tiktok_shop": {},
+		"weibo": {}, "wechat_mp": {}, "wechat_channels": {}, "youtube": {},
+		"reddit": {}, "linkedin": {},
+	}, platforms)
+}
 
-	require.Len(t, matched, 1)
-	operation := matched[0]
-	assert.Equal(t, "social.content.search", operation.OperationKey)
-	assert.Equal(t, "douyin", operation.Platform)
-	assert.Equal(t, map[string]string{"query": "keyword"}, operation.ParameterMap)
-	assert.Equal(t, map[string]any{"page": 1}, operation.FixedParams)
+func TestStandardCapabilityRegistryExcludesJustOneAPI(t *testing.T) {
+	for _, definition := range standardCapabilityRegistry() {
+		for _, operation := range definition.Bindings {
+			assert.NotEqual(t, justOneAPIDirectMappingKey, operation.MappingKey)
+			assert.NotContains(t, strings.ToLower(operation.Path), "justoneapi")
+		}
+	}
 }
 
 func TestStandardTrendOutputContractRequiresDisplayFields(t *testing.T) {
@@ -205,8 +215,8 @@ func TestStandardTrendOutputContractRequiresDisplayFields(t *testing.T) {
 }
 
 func TestStandardProviderCatalogHashAndOrderAreDeterministic(t *testing.T) {
-	hashes := make(map[string]string, 2)
-	for _, provider := range []string{ProviderJustOneAPI, ProviderTikHub} {
+	hashes := make(map[string]string, 1)
+	for _, provider := range []string{ProviderTikHub} {
 		first := standardProviderCatalog(provider)
 		require.NotEmpty(t, first.Operations)
 		require.Equal(t, provider, first.Provider)
@@ -230,5 +240,5 @@ func TestStandardProviderCatalogHashAndOrderAreDeterministic(t *testing.T) {
 		}
 		assert.True(t, sort.StringsAreSorted(keys), provider)
 	}
-	assert.NotEqual(t, hashes[ProviderJustOneAPI], hashes[ProviderTikHub])
+	assert.NotEmpty(t, hashes[ProviderTikHub])
 }

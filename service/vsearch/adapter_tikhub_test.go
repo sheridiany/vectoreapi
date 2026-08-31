@@ -168,11 +168,14 @@ func TestTikHubAdapterNormalizesDouyinTrendList(t *testing.T) {
 			"code":200,
 			"request_id":"trend-request-1",
 			"data":{
-				"trending_list":[{"sentence_id":"ignored","word":"not the ranked list"}],
-				"word_list":[
-					{"sentence_id":7300000000000000001,"word":"AI Agent","hot_value":987654},
-					{"sentence_id":"7300000000000000002","word":"具身智能","hot_value":876543}
-				]
+				"status_code":0,
+				"data":{
+					"trending_list":[{"sentence_id":"ignored","word":"not the ranked list"}],
+					"word_list":[
+						{"sentence_id":7300000000000000001,"word":"AI Agent","position":3,"hot_value":987654},
+						{"sentence_id":"7300000000000000002","word":"具身智能","position":8,"hot_value":876543}
+					]
+				}
 			}
 		}`))
 	}))
@@ -192,8 +195,8 @@ func TestTikHubAdapterNormalizesDouyinTrendList(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, map[string]any{
 		"items": []any{
-			map[string]any{"id": "7300000000000000001", "type": "trend", "platform": "douyin", "title": "AI Agent", "rank": 1, "score": float64(987654)},
-			map[string]any{"id": "7300000000000000002", "type": "trend", "platform": "douyin", "title": "具身智能", "rank": 2, "score": float64(876543)},
+			map[string]any{"id": "7300000000000000001", "type": "trend", "platform": "douyin", "title": "AI Agent", "rank": 3, "score": float64(987654)},
+			map[string]any{"id": "7300000000000000002", "type": "trend", "platform": "douyin", "title": "具身智能", "rank": 8, "score": float64(876543)},
 		},
 		"page": map[string]any{"cursor": nil, "has_more": false},
 	}, result.Data)
@@ -404,16 +407,26 @@ func TestTikHubAdapterReturnsOnlyCuratedCatalogBindings(t *testing.T) {
 	assert.NotEmpty(t, snapshot.Version)
 	assert.NotEmpty(t, snapshot.SchemaHash)
 	require.NotEmpty(t, snapshot.Operations)
+	verified := 0
 	for _, operation := range snapshot.Operations {
 		assert.Equal(t, tikHubDirectMappingKey, operation.MappingKey)
 		assert.Equal(t, "USD", operation.CostCurrency)
-		assert.False(t, operation.ContractEquivalent)
-		assert.False(t, operation.BillingReady)
+		if operation.OperationKey == "social.trend.list" && operation.Platform == "douyin" {
+			assert.True(t, operation.ContractEquivalent)
+			assert.True(t, operation.BillingReady)
+			assert.Equal(t, int64(2_000), operation.CostAmountMicros)
+			verified++
+		} else {
+			assert.False(t, operation.ContractEquivalent)
+			assert.False(t, operation.BillingReady)
+			assert.Zero(t, operation.CostAmountMicros)
+		}
 		assert.Equal(t, AuthPlacementBearer, operation.AuthPlacement)
-		assert.Equal(t, http.MethodGet, operation.Method)
+		assert.Contains(t, []string{http.MethodGet, http.MethodPost}, operation.Method)
 		assert.NotEmpty(t, operation.OperationID)
 		assert.True(t, strings.HasPrefix(operation.Path, "/api/"), operation.OperationID)
 	}
+	assert.Equal(t, 1, verified)
 }
 
 func TestTikHubAdapterDisablesRedirectsEvenWithCustomClient(t *testing.T) {

@@ -33,6 +33,35 @@ func TestSearchChargeMicrosToQuotaUsesCoreBillingConfiguration(t *testing.T) {
 	assert.Zero(t, quota)
 }
 
+func TestSearchUpstreamCostToCNYUsesConfiguredRateWithoutMarkup(t *testing.T) {
+	previousRate := operation_setting.USDExchangeRate
+	t.Cleanup(func() { operation_setting.USDExchangeRate = previousRate })
+	operation_setting.USDExchangeRate = 7.5
+
+	cost, currency, err := searchUpstreamCostToCNY(2_000, "usd")
+	require.NoError(t, err)
+	assert.Equal(t, int64(15_000), cost)
+	assert.Equal(t, "CNY", currency)
+
+	cost, currency, err = searchUpstreamCostToCNY(15_000, "CNY")
+	require.NoError(t, err)
+	assert.Equal(t, int64(15_000), cost)
+	assert.Equal(t, "CNY", currency)
+}
+
+func TestSearchUpstreamCostToCNYRejectsInvalidCurrencyAndRate(t *testing.T) {
+	previousRate := operation_setting.USDExchangeRate
+	t.Cleanup(func() { operation_setting.USDExchangeRate = previousRate })
+
+	_, _, err := searchUpstreamCostToCNY(2_000, "EUR")
+	require.Error(t, err)
+	operation_setting.USDExchangeRate = 0
+	_, _, err = searchUpstreamCostToCNY(2_000, "USD")
+	require.Error(t, err)
+	_, _, err = searchUpstreamCostToCNY(-1, "CNY")
+	require.Error(t, err)
+}
+
 func TestSearchChargeMicrosToQuotaRejectsInvalidOrUnrepresentableValues(t *testing.T) {
 	previousRate := operation_setting.USDExchangeRate
 	previousQuotaPerUnit := common.QuotaPerUnit

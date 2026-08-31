@@ -1070,16 +1070,28 @@ func TestControlPlaneSyncCreatesDraftCapabilitiesFromStandardCatalog(t *testing.
 		require.NoError(t, bindingErr)
 		require.NotEmpty(t, bindings)
 		for _, binding := range bindings {
-			assert.False(t, binding.ContractEquivalent)
+			verifiedTrend := capability.OperationKey == "social.trend.list" && binding.Platform == "douyin"
+			assert.Equal(t, verifiedTrend, binding.ContractEquivalent)
+			assert.Equal(t, verifiedTrend, binding.BillingReady)
 			assert.Equal(t, "tikhub.direct.v1", binding.MappingKey)
+			assert.Equal(t, "CNY", binding.CostCurrency)
+			if verifiedTrend {
+				assert.Positive(t, binding.UpstreamCostMicros)
+				assert.Equal(t, binding.UpstreamCostMicros, capability.PriceMicros, "verified ability must use the normalized upstream cost without markup")
+			}
 		}
 	}
 	catalog, err := control.runtime.ListCatalog(context.Background(), Principal{}, true)
 	require.NoError(t, err)
 	require.NotEmpty(t, catalog)
 	for _, item := range catalog {
-		assert.Equal(t, "unverified", item.ContractStatus)
-		assert.Zero(t, item.HealthyRouteCount)
+		if item.Name == "平台趋势榜" {
+			assert.Equal(t, "verified", item.ContractStatus)
+			assert.Equal(t, int64(1), item.HealthyRouteCount)
+		} else {
+			assert.Equal(t, "unverified", item.ContractStatus)
+			assert.Zero(t, item.HealthyRouteCount)
+		}
 		assert.False(t, item.Enabled)
 	}
 }
@@ -1112,7 +1124,7 @@ func TestControlPlaneSyncDisablesBindingsRemovedFromCuratedCatalog(t *testing.T)
 	assert.Equal(t, model.SearchCapabilityBindingStatusEnabled, retained.Status)
 }
 
-func TestControlPlaneSyncDisablesOperationMovedToAnotherCapability(t *testing.T) {
+func TestControlPlaneSyncDisablesRemovedJustOneAPIOperations(t *testing.T) {
 	openRuntimeTestDB(t)
 	adapter := &runtimeFakeAdapter{snapshot: standardProviderCatalog(ProviderJustOneAPI)}
 	control := NewControlPlane(func(*model.SearchUpstreamAccount, string) (ProviderAdapter, error) {
@@ -1138,18 +1150,15 @@ func TestControlPlaneSyncDisablesOperationMovedToAnotherCapability(t *testing.T)
 	}))
 
 	_, err = control.SyncCatalog(context.Background())
-	require.NoError(t, err)
+	require.Error(t, err)
+	var publicErr *PublicError
+	require.ErrorAs(t, err, &publicErr)
+	assert.Equal(t, "CATALOG_SYNC_FAILED", publicErr.Code)
 
 	var oldBinding model.SearchCapabilityBinding
 	require.NoError(t, model.DB.Where("capability_id = ? AND provider_operation_id = ?", oldCapability.Id, "getApiDouyinHotSearchV1").First(&oldBinding).Error)
 	assert.Equal(t, model.SearchCapabilityBindingStatusDisabled, oldBinding.Status)
-	contentID, err := model.GenerateSearchCapabilityPublicID("social.content.search@v1")
-	require.NoError(t, err)
-	contentCapability, err := model.GetSearchCapabilityByPublicID(contentID)
-	require.NoError(t, err)
-	var currentBinding model.SearchCapabilityBinding
-	require.NoError(t, model.DB.Where("capability_id = ? AND provider_operation_id = ?", contentCapability.Id, "getApiDouyinHotSearchV1").First(&currentBinding).Error)
-	assert.Equal(t, model.SearchCapabilityBindingStatusEnabled, currentBinding.Status)
+	assert.Empty(t, adapter.snapshot.Operations)
 }
 
 func TestControlPlaneRejectsPublishingUnverifiedStandardContract(t *testing.T) {
@@ -1197,7 +1206,7 @@ func TestExecutionRuntimeRejectsUnverifiedStandardContractBeforeDispatch(t *test
 	require.NoError(t, err)
 	_, err = control.SyncCatalog(context.Background())
 	require.NoError(t, err)
-	serviceID, err := model.GenerateSearchCapabilityPublicID("social.trend.list@v1")
+	serviceID, err := model.GenerateSearchCapabilityPublicID("social.content.search@v1")
 	require.NoError(t, err)
 	capability, err := model.GetSearchCapabilityByPublicID(serviceID)
 	require.NoError(t, err)
@@ -1205,7 +1214,7 @@ func TestExecutionRuntimeRejectsUnverifiedStandardContractBeforeDispatch(t *test
 		Update("status", model.SearchCapabilityStatusEnabled).Error)
 
 	_, err = control.runtime.Execute(context.Background(), Principal{UserID: 7, EnterpriseID: 11, AgentKeyID: 21}, ExecuteCommand{
-		ServiceID: serviceID, Params: map[string]any{"platform": "douyin"},
+		ServiceID: serviceID, Params: map[string]any{"platform": "tiktok", "query": "AI Agent"},
 	})
 
 	var publicErr *PublicError
