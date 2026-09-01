@@ -61,6 +61,12 @@ const endpointRows = [
     label: 'Claude Messages',
     description: '需要 Anthropic 原生格式时使用。',
   },
+  {
+    method: 'POST',
+    path: '/v1/mcp',
+    label: 'vSearch MCP',
+    description: '使用独立 vSearch 密钥发现并调用公开数据能力。',
+  },
 ]
 
 export function DocsApiOverviewPage() {

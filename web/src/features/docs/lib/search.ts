@@ -32,6 +32,7 @@ export type DocsRoute =
   | '/docs/guide/chat-clients'
   | '/docs/api'
   | '/docs/api/chat-completions'
+  | '/docs/api/vsearch'
   | '/docs/troubleshooting'
 
 export type DocsNavItem = {
@@ -99,6 +100,11 @@ export const docsNavGroups: readonly DocsNavGroup[] = [
         label: 'Chat Completions',
         description: 'OpenAI 兼容对话接口',
         to: '/docs/api/chat-completions',
+      },
+      {
+        label: 'vSearch 数据能力',
+        description: '平台、能力、密钥与 MCP 调用',
+        to: '/docs/api/vsearch',
       },
     ],
   },

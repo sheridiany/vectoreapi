@@ -72,6 +72,7 @@ import { Route as AuthenticatedUsersIndexRouteImport } from './routes/_authentic
 import { Route as AuthenticatedWalletIndexRouteImport } from './routes/_authenticated/wallet/index'
 import { Route as DocsApiIndexRouteImport } from './routes/docs/api/index'
 import { Route as DocsApiChatCompletionsRouteImport } from './routes/docs/api/chat-completions'
+import { Route as DocsApiVsearchRouteImport } from './routes/docs/api/vsearch'
 import { Route as DocsGuideIndexRouteImport } from './routes/docs/guide/index'
 import { Route as DocsGuideChatClientsRouteImport } from './routes/docs/guide/chat-clients'
 import { Route as DocsGuideRegistrationRouteImport } from './routes/docs/guide/registration'
@@ -436,6 +437,11 @@ const DocsApiChatCompletionsRoute = DocsApiChatCompletionsRouteImport.update({
   path: '/docs/api/chat-completions',
   getParentRoute: () => rootRouteImport,
 } as any)
+const DocsApiVsearchRoute = DocsApiVsearchRouteImport.update({
+  id: '/docs/api/vsearch',
+  path: '/docs/api/vsearch',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const DocsGuideIndexRoute = DocsGuideIndexRouteImport.update({
   id: '/docs/guide/',
   path: '/docs/guide/',
@@ -610,6 +616,7 @@ export interface FileRoutesByFullPath {
   '/search/logs': typeof AuthenticatedSearchLogsRoute
   '/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
   '/docs/api/chat-completions': typeof DocsApiChatCompletionsRoute
+  '/docs/api/vsearch': typeof DocsApiVsearchRoute
   '/docs/guide/chat-clients': typeof DocsGuideChatClientsRoute
   '/docs/guide/registration': typeof DocsGuideRegistrationRoute
   '/channels/': typeof AuthenticatedChannelsIndexRoute
@@ -694,6 +701,7 @@ export interface FileRoutesByTo {
   '/search/logs': typeof AuthenticatedSearchLogsRoute
   '/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
   '/docs/api/chat-completions': typeof DocsApiChatCompletionsRoute
+  '/docs/api/vsearch': typeof DocsApiVsearchRoute
   '/docs/guide/chat-clients': typeof DocsGuideChatClientsRoute
   '/docs/guide/registration': typeof DocsGuideRegistrationRoute
   '/channels': typeof AuthenticatedChannelsIndexRoute
@@ -782,6 +790,7 @@ export interface FileRoutesById {
   '/_authenticated/search/logs': typeof AuthenticatedSearchLogsRoute
   '/_authenticated/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
   '/docs/api/chat-completions': typeof DocsApiChatCompletionsRoute
+  '/docs/api/vsearch': typeof DocsApiVsearchRoute
   '/docs/guide/chat-clients': typeof DocsGuideChatClientsRoute
   '/docs/guide/registration': typeof DocsGuideRegistrationRoute
   '/_authenticated/channels/': typeof AuthenticatedChannelsIndexRoute
@@ -869,6 +878,7 @@ export interface FileRouteTypes {
     | '/search/logs'
     | '/usage-logs/$section'
     | '/docs/api/chat-completions'
+    | '/docs/api/vsearch'
     | '/docs/guide/chat-clients'
     | '/docs/guide/registration'
     | '/channels/'
@@ -953,6 +963,7 @@ export interface FileRouteTypes {
     | '/search/logs'
     | '/usage-logs/$section'
     | '/docs/api/chat-completions'
+    | '/docs/api/vsearch'
     | '/docs/guide/chat-clients'
     | '/docs/guide/registration'
     | '/channels'
@@ -1040,6 +1051,7 @@ export interface FileRouteTypes {
     | '/_authenticated/search/logs'
     | '/_authenticated/usage-logs/$section'
     | '/docs/api/chat-completions'
+    | '/docs/api/vsearch'
     | '/docs/guide/chat-clients'
     | '/docs/guide/registration'
     | '/_authenticated/channels/'
@@ -1102,6 +1114,7 @@ export interface RootRouteChildren {
   RankingsIndexRoute: typeof RankingsIndexRoute
   SetupIndexRoute: typeof SetupIndexRoute
   DocsApiChatCompletionsRoute: typeof DocsApiChatCompletionsRoute
+  DocsApiVsearchRoute: typeof DocsApiVsearchRoute
   DocsGuideChatClientsRoute: typeof DocsGuideChatClientsRoute
   DocsGuideRegistrationRoute: typeof DocsGuideRegistrationRoute
   DocsApiIndexRoute: typeof DocsApiIndexRoute
@@ -1552,6 +1565,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DocsApiChatCompletionsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/docs/api/vsearch': {
+      id: '/docs/api/vsearch'
+      path: '/docs/api/vsearch'
+      fullPath: '/docs/api/vsearch'
+      preLoaderRoute: typeof DocsApiVsearchRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/docs/guide/': {
       id: '/docs/guide/'
       path: '/docs/guide'
@@ -1901,6 +1921,7 @@ const rootRouteChildren: RootRouteChildren = {
   RankingsIndexRoute: RankingsIndexRoute,
   SetupIndexRoute: SetupIndexRoute,
   DocsApiChatCompletionsRoute: DocsApiChatCompletionsRoute,
+  DocsApiVsearchRoute: DocsApiVsearchRoute,
   DocsGuideChatClientsRoute: DocsGuideChatClientsRoute,
   DocsGuideRegistrationRoute: DocsGuideRegistrationRoute,
   DocsApiIndexRoute: DocsApiIndexRoute,

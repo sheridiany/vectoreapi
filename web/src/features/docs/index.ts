@@ -24,4 +24,5 @@ export {
   DocsRegistrationPage,
 } from './pages/guide'
 export { DocsApiOverviewPage, DocsChatCompletionsPage } from './pages/api'
+export { DocsVSearchPage } from './pages/vsearch'
 export { DocsTroubleshootingPage } from './pages/troubleshooting'

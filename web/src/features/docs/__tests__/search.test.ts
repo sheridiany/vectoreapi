@@ -19,6 +19,15 @@ describe('docs search', () => {
     expect(results.map((result) => result.label)).toEqual(['Chat Completions'])
   })
 
+  test('finds the vSearch API guide by product or protocol', () => {
+    expect(filterDocsSearchItems('vSearch').map((result) => result.to)).toEqual(
+      ['/docs/api/vsearch']
+    )
+    expect(filterDocsSearchItems('MCP').map((result) => result.to)).toEqual([
+      '/docs/api/vsearch',
+    ])
+  })
+
   test('returns no result for an unknown document query', () => {
     expect(filterDocsSearchItems('不存在的页面')).toEqual([])
   })
