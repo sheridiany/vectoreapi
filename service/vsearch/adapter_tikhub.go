@@ -379,7 +379,9 @@ func mapTikHubParams(operation ProviderOperation, request CanonicalRequest) (map
 	}
 	for name, value := range operation.FixedParams {
 		name = strings.TrimSpace(name)
-		if name == "" || searchProviderReservedParam(name) {
+		rawEnabled, rawBool := value.(bool)
+		trustedRawDisabled := name == "raw" && rawBool && !rawEnabled
+		if name == "" || (searchProviderReservedParam(name) && !trustedRawDisabled) {
 			return nil, newConnectorError("UPSTREAM_BINDING_INVALID", http.StatusInternalServerError, "上游能力绑定无效。")
 		}
 		providerParams[name] = value

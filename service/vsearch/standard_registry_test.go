@@ -56,6 +56,7 @@ func TestStandardCapabilityRegistryContainsOnlyTikHubAndSafeHTTPBindings(t *test
 	seenOperations := make(map[string]struct{})
 	verifiedCosts := map[string]int64{
 		"social.account.get/youtube":                1_000,
+		"social.account.contents.list/wechat_mp":    1_000,
 		"social.account.contents.list/youtube":      1_000,
 		"social.content.get/youtube":                1_000,
 		"social.content.search/youtube":             2_000,
@@ -192,10 +193,31 @@ func TestStandardCapabilityRegistryPublishesReviewedPlatformSet(t *testing.T) {
 		}
 	}
 	assert.Equal(t, map[string]struct{}{
-		"douyin": {}, "tiktok": {}, "xiaohongshu": {}, "tiktok_shop": {},
-		"weibo": {}, "wechat_mp": {}, "wechat_channels": {}, "youtube": {},
-		"reddit": {}, "linkedin": {},
+		"douyin": {}, "tiktok_shop": {}, "wechat_mp": {}, "youtube": {},
 	}, platforms)
+}
+
+func TestEveryAdvertisedPlatformBindingIsExecutable(t *testing.T) {
+	for _, definition := range standardCapabilityRegistry() {
+		properties := definition.InputSchema["properties"].(map[string]any)
+		platforms := properties["platform"].(map[string]any)["enum"].([]any)
+		require.Len(t, definition.Bindings, len(platforms), definition.OperationKey)
+		for _, platform := range platforms {
+			var operation *ProviderOperation
+			for index := range definition.Bindings {
+				if definition.Bindings[index].Platform == platform {
+					operation = &definition.Bindings[index]
+					break
+				}
+			}
+			require.NotNil(t, operation, definition.OperationKey+"/"+platform.(string)+" has no binding")
+			identity := operation.OperationKey + "/" + operation.Platform
+			assert.True(t, operation.ContractEquivalent, identity+" is advertised but not contract verified")
+			assert.True(t, operation.BillingReady, identity+" is advertised but not billing ready")
+			assert.Positive(t, operation.CostAmountMicros, identity+" has no verified upstream cost")
+			assert.Equal(t, "USD", operation.CostCurrency, identity+" has no verified upstream currency")
+		}
+	}
 }
 
 func TestStandardCapabilityRegistryExcludesJustOneAPI(t *testing.T) {

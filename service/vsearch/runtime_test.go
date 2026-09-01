@@ -1063,6 +1063,7 @@ func TestControlPlaneSyncCreatesDraftCapabilitiesFromStandardCatalog(t *testing.
 	require.NotEmpty(t, capabilities)
 	verifiedBindings := map[string]struct{}{
 		"social.account.get/youtube":                {},
+		"social.account.contents.list/wechat_mp":    {},
 		"social.account.contents.list/youtube":      {},
 		"social.content.get/youtube":                {},
 		"social.content.search/youtube":             {},
@@ -1089,8 +1090,8 @@ func TestControlPlaneSyncCreatesDraftCapabilitiesFromStandardCatalog(t *testing.
 			assert.Equal(t, "CNY", binding.CostCurrency)
 			if verified {
 				assert.Positive(t, binding.UpstreamCostMicros)
-				assert.Equal(t, binding.UpstreamCostMicros, capability.UpstreamCostMicros, "verified upstream cost must not depend on catalog order")
-				assert.Equal(t, binding.UpstreamCostMicros, capability.PriceMicros, "verified ability must use the normalized upstream cost without markup")
+				assert.GreaterOrEqual(t, capability.UpstreamCostMicros, binding.UpstreamCostMicros, "capability cost floor must cover every verified route")
+				assert.Equal(t, capability.UpstreamCostMicros, capability.PriceMicros, "verified ability must use the normalized upstream cost without markup")
 			}
 		}
 	}
@@ -1099,7 +1100,7 @@ func TestControlPlaneSyncCreatesDraftCapabilitiesFromStandardCatalog(t *testing.
 	require.NotEmpty(t, catalog)
 	for _, item := range catalog {
 		assert.Equal(t, "verified", item.ContractStatus)
-		assert.Equal(t, int64(1), item.HealthyRouteCount)
+		assert.Positive(t, item.HealthyRouteCount)
 		assert.False(t, item.Enabled)
 	}
 }
@@ -1217,7 +1218,7 @@ func TestControlPlaneRejectsPublishingUnverifiedStandardContract(t *testing.T) {
 	assert.Equal(t, "CAPABILITY_CONTRACT_UNVERIFIED", publicErr.Code)
 }
 
-func TestExecutionRuntimeRejectsUnverifiedStandardContractBeforeDispatch(t *testing.T) {
+func TestExecutionRuntimeRejectsUnadvertisedPlatformBeforeDispatch(t *testing.T) {
 	openRuntimeTestDB(t)
 	adapter := &runtimeFakeAdapter{snapshot: standardProviderCatalog(ProviderTikHub)}
 	control := NewControlPlane(func(*model.SearchUpstreamAccount, string) (ProviderAdapter, error) {
@@ -1242,7 +1243,7 @@ func TestExecutionRuntimeRejectsUnverifiedStandardContractBeforeDispatch(t *test
 
 	var publicErr *PublicError
 	require.ErrorAs(t, err, &publicErr)
-	assert.Equal(t, "CAPABILITY_UNAVAILABLE", publicErr.Code)
+	assert.Equal(t, "INVALID_TOOL_PARAMS", publicErr.Code)
 	assert.Zero(t, adapter.executeCalls)
 }
 

@@ -378,12 +378,23 @@ func TestTikHubAdapterNormalizesNestedTikTokShopContracts(t *testing.T) {
 			expected: "product-1",
 		},
 		{
+			name: "detail v3",
+			operation: ProviderOperation{OperationKey: "commerce.product.get", ContractVersion: "v1", Platform: "tiktok_shop", Method: http.MethodGet,
+				Path: "/shop-detail-v3", AuthPlacement: AuthPlacementBearer, MappingKey: tikHubDirectMappingKey, MappingVersion: "v1", OutputSchema: entityOutputSchema("product")},
+			response: `{"code":200,"data":{"product_data":{"page_config":{"components_map":[{"component_name":"product_info","component_data":{"product_info":{
+				"product_model":{"product_id":"product-2","name":"Product Two","description":"[{\"type\":\"text\",\"text\":\"Public description\"}]",
+				"sold_count":123,"images":[{"uri":"private-uri","url_list":["https://img.example/product-2.jpg"]}]},
+				"seller_model":{"shop_name":"Shop Two"},"review_model":{"product_overall_score":4.8,"product_review_count":"42"},
+				"promotion_model":{"promotion_product_price":{"min_price":{"currency_name":"USD","sale_price_decimal":"12.34"}}}}}}]}}}}`,
+			expected: "product-2",
+		},
+		{
 			name: "reviews",
 			operation: ProviderOperation{OperationKey: "commerce.product.reviews.list", ContractVersion: "v1", Platform: "tiktok_shop", Method: http.MethodGet,
 				Path: "/shop-reviews", AuthPlacement: AuthPlacementBearer, MappingKey: tikHubDirectMappingKey, MappingVersion: "v1", OutputSchema: listOutputSchema("review")},
-			response: `{"code":200,"data":{"code":0,"message":"success","data":{"has_more":false,"reviews":[{
-				"review_id":"review-1","content":"Works well","create_time":"2026-08-31T00:00:00Z","like_count":5,
-				"author":{"user_id":"buyer-1","display_name":"Buyer"}}]}}}`,
+			response: `{"code":200,"data":{"code":0,"message":"success","data":{"has_more":false,"product_reviews":[{
+				"review_id":"review-1","review_text":"Works well","review_time":"1788210337082","like_count":5,
+				"reviewer_id":"buyer-1","reviewer_name":"Buyer","reviewer_avatar_url":"https://img.example/buyer.jpg"}]}}}`,
 			expected: "review-1",
 		},
 	}
@@ -405,7 +416,15 @@ func TestTikHubAdapterNormalizesNestedTikTokShopContracts(t *testing.T) {
 			require.True(t, ok)
 			if items, ok := data["items"].([]any); ok {
 				require.NotEmpty(t, items)
-				assert.Equal(t, test.expected, items[0].(map[string]any)["id"])
+				item := items[0].(map[string]any)
+				assert.Equal(t, test.expected, item["id"])
+				if test.name == "reviews" {
+					assert.Equal(t, "Works well", item["text"])
+					assert.Equal(t, "2026-08-31T21:05:37Z", item["published_at"])
+					assert.Equal(t, map[string]any{
+						"id": "buyer-1", "display_name": "Buyer", "avatar_url": "https://img.example/buyer.jpg",
+					}, item["author"])
+				}
 			} else {
 				assert.Equal(t, test.expected, data["id"])
 			}
@@ -413,16 +432,83 @@ func TestTikHubAdapterNormalizesNestedTikTokShopContracts(t *testing.T) {
 	}
 }
 
+func TestTikHubAdapterNormalizesVerifiedWeChatContracts(t *testing.T) {
+	tests := []struct {
+		name      string
+		operation ProviderOperation
+		params    map[string]any
+		response  string
+		expected  map[string]any
+	}{
+		{
+			name: "article search",
+			operation: verifiedProviderPOST("social.content.search", "wechat_mp", "wechat-search", "/api/v1/wechat_search/v2/fetch_search",
+				map[string]string{"query": "keyword"}, map[string]any{"business_type": "article", "raw": false}, listOutputSchema("content"), 1_000),
+			params: map[string]any{"query": "天工机器人"},
+			response: `{"code":200,"data":{"continue_flag":1,"cursor":"next-search","items":[{
+				"docID":"article-1","title":"<em class=\"highlight\">天工</em>机器人","desc":"智慧<em class=\"highlight\">分拣</em>",
+				"doc_url":"https://mp.weixin.qq.com/s/article-1","timestamp":1787909400,"thumbUrl":"https://img.example/article.jpg",
+				"source":{"title":"Tegene Robot"}}]}}`,
+			expected: map[string]any{"id": "article-1", "title": "天工机器人", "text": "智慧分拣", "cursor": "next-search", "has_more": true},
+		},
+		{
+			name: "account articles",
+			operation: verifiedProviderPOST("social.account.contents.list", "wechat_mp", "wechat-account-articles", "/api/v1/wechat_mp/v2/fetch_account_articles",
+				map[string]string{"account_ref": "username"}, map[string]any{"raw": false}, listOutputSchema("content"), 1_000),
+			params: map[string]any{"account_ref": "gh_1a2f6fc19398"},
+			response: `{"code":200,"data":{"is_end":0,"next_offset":"next-account","articles":[{
+				"app_msg_id":2247524552,"idx":1,"title":"复杂件型如何一次分拣到位","digest":"木马速运一体机方案",
+				"url":"https://mp.weixin.qq.com/s/article-2","cover":"https://img.example/cover.jpg","create_time":1787904549}]}}`,
+			expected: map[string]any{"id": "2247524552-1", "title": "复杂件型如何一次分拣到位", "text": "木马速运一体机方案", "cursor": "next-account", "has_more": true},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+				response.Header().Set("Content-Type", "application/json")
+				_, _ = response.Write([]byte(test.response))
+			}))
+			t.Cleanup(server.Close)
+			adapter := newTikHubTestAdapter(t, server.URL, nil)
+
+			result, err := adapter.Execute(context.Background(), test.operation, CanonicalRequest{
+				OperationKey: test.operation.OperationKey, Platform: "wechat_mp", Params: test.params,
+			})
+
+			require.NoError(t, err)
+			require.NoError(t, validateSchemaValue(result.Data, test.operation.OutputSchema, "$"))
+			data := result.Data.(map[string]any)
+			items := data["items"].([]any)
+			require.Len(t, items, 1)
+			item := items[0].(map[string]any)
+			assert.Equal(t, test.expected["id"], item["id"])
+			assert.Equal(t, test.expected["title"], item["title"])
+			assert.Equal(t, test.expected["text"], item["text"])
+			assert.Equal(t, test.expected["cursor"], data["page"].(map[string]any)["cursor"])
+			assert.Equal(t, test.expected["has_more"], data["page"].(map[string]any)["has_more"])
+			assert.NotContains(t, item["title"], "<em")
+		})
+	}
+}
+
 func TestTikHubCatalogUsesCurrentTikTokShopReviewsV2Binding(t *testing.T) {
 	snapshot := standardProviderCatalog(ProviderTikHub)
+	detailFound := false
+	reviewsFound := false
 	for _, operation := range snapshot.Operations {
+		if operation.OperationKey == "commerce.product.get" && operation.Platform == "tiktok_shop" {
+			assert.Equal(t, "/api/v1/tiktok/shop/web/fetch_product_detail_v3", operation.Path)
+			detailFound = true
+		}
 		if operation.OperationKey == "commerce.product.reviews.list" && operation.Platform == "tiktok_shop" {
 			assert.Equal(t, "/api/v1/tiktok/shop/web/fetch_product_reviews_v2", operation.Path)
 			assert.NotContains(t, operation.FixedParams, "page_size")
-			return
+			reviewsFound = true
 		}
 	}
-	t.Fatal("TikTok Shop review binding not found")
+	assert.True(t, detailFound, "TikTok Shop detail binding not found")
+	assert.True(t, reviewsFound, "TikTok Shop review binding not found")
 }
 
 func TestTikHubAdapterRejectsInvalidDouyinTrendID(t *testing.T) {
@@ -487,6 +573,7 @@ func TestTikHubAdapterPreservesExplicitZeroAndFalseInPostBody(t *testing.T) {
 			assert.Equal(t, float64(0), body["count"])
 			assert.Contains(t, body, "include_ads")
 			assert.Equal(t, false, body["include_ads"])
+			assert.Equal(t, false, body["raw"])
 		}
 		response.Header().Set("Content-Type", "application/json")
 		_, _ = response.Write([]byte(`{"code":200,"request_id":"post-1","data":{"ok":true}}`))
@@ -494,13 +581,29 @@ func TestTikHubAdapterPreservesExplicitZeroAndFalseInPostBody(t *testing.T) {
 	t.Cleanup(server.Close)
 	adapter := newTikHubTestAdapter(t, server.URL, nil)
 
-	result, err := adapter.Execute(context.Background(), tikHubTestOperation(http.MethodPost), CanonicalRequest{
+	operation := tikHubTestOperation(http.MethodPost)
+	operation.FixedParams = map[string]any{"raw": false}
+	result, err := adapter.Execute(context.Background(), operation, CanonicalRequest{
 		OperationKey: "social.content.search",
 		Platform:     "tiktok",
 		Params:       map[string]any{"query": "cats", "limit": 0, "include_ads": false},
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "post-1", result.ProviderRequestID)
+}
+
+func TestTikHubAdapterRejectsFixedRawResponseEnablement(t *testing.T) {
+	adapter := newTikHubTestAdapter(t, "http://127.0.0.1:8080", nil)
+	operation := tikHubTestOperation(http.MethodPost)
+	operation.FixedParams = map[string]any{"raw": true}
+
+	_, err := adapter.Execute(context.Background(), operation, CanonicalRequest{
+		OperationKey: operation.OperationKey, Platform: operation.Platform, Params: map[string]any{"query": "cats"},
+	})
+
+	var connectorError *ConnectorError
+	require.ErrorAs(t, err, &connectorError)
+	assert.Equal(t, "UPSTREAM_BINDING_INVALID", connectorError.Code)
 }
 
 func TestTikHubAdapterMapsRateLimitAndDoesNotLeakProviderBody(t *testing.T) {
@@ -604,6 +707,7 @@ func TestTikHubAdapterReturnsOnlyCuratedCatalogBindings(t *testing.T) {
 	require.NotEmpty(t, snapshot.Operations)
 	verifiedCosts := map[string]int64{
 		"social.account.get/youtube":                1_000,
+		"social.account.contents.list/wechat_mp":    1_000,
 		"social.account.contents.list/youtube":      1_000,
 		"social.content.get/youtube":                1_000,
 		"social.content.search/youtube":             2_000,

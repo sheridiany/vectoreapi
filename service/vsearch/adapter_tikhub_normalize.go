@@ -2,10 +2,12 @@ package vsearch
 
 import (
 	"encoding/json"
+	"html"
 	"math"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 )
@@ -21,6 +23,8 @@ func normalizeTikHubResult(data json.RawMessage, operation ProviderOperation) (m
 	switch operation.Platform {
 	case "youtube":
 		return normalizeTikHubYouTube(payload, operation.OperationKey)
+	case "wechat_mp":
+		return normalizeTikHubWeChat(payload, operation.OperationKey)
 	case "tiktok_shop":
 		return normalizeTikHubShop(payload, operation.OperationKey)
 	default:
@@ -30,6 +34,65 @@ func normalizeTikHubResult(data json.RawMessage, operation ProviderOperation) (m
 		}
 		return result, nil
 	}
+}
+
+func normalizeTikHubWeChat(payload any, operationKey string) (map[string]any, error) {
+	root, ok := tikHubMap(payload)
+	if !ok {
+		return nil, tikHubContractMismatch()
+	}
+	switch operationKey {
+	case "social.content.search":
+		items, ok := tikHubArray(root["items"])
+		if !ok {
+			return nil, tikHubContractMismatch()
+		}
+		return normalizeTikHubWeChatArticles(items, root["cursor"], root["continue_flag"])
+	case "social.account.contents.list":
+		items, ok := tikHubArray(root["articles"])
+		if !ok {
+			return nil, tikHubContractMismatch()
+		}
+		return normalizeTikHubWeChatArticles(items, root["next_offset"], !tikHubTruthy(root["is_end"]))
+	default:
+		return nil, tikHubContractMismatch()
+	}
+}
+
+func normalizeTikHubWeChatArticles(items []any, cursorValue, hasMoreValue any) (map[string]any, error) {
+	result := make([]any, 0, len(items))
+	for _, raw := range items {
+		source, ok := tikHubMap(raw)
+		if !ok {
+			return nil, tikHubContractMismatch()
+		}
+		id, ok := tikHubString(tikHubFirstValue(source, "docID", "app_msg_id"))
+		if !ok {
+			return nil, tikHubContractMismatch()
+		}
+		if index, valid := tikHubString(source["idx"]); valid {
+			id += "-" + index
+		}
+		item := map[string]any{"id": id, "type": "content", "platform": "wechat_mp"}
+		tikHubCopyCleanString(item, "title", source, "title")
+		tikHubCopyCleanString(item, "text", source, "digest", "desc")
+		tikHubCopyString(item, "url", source, "url", "doc_url")
+		if publishedAt, valid := tikHubTime(source, "create_time", "timestamp", "date"); valid {
+			item["published_at"] = publishedAt
+		}
+		if author, valid := tikHubMap(source["source"]); valid {
+			identity := map[string]any{}
+			tikHubCopyCleanString(identity, "display_name", author, "title")
+			if len(identity) > 0 {
+				item["author"] = identity
+			}
+		}
+		if media := tikHubMedia(source, "cover", "thumbUrl", "covers"); len(media) > 0 {
+			item["media"] = media
+		}
+		result = append(result, item)
+	}
+	return tikHubList(result, cursorValue, hasMoreValue), nil
 }
 
 func normalizeTikHubYouTube(payload any, operationKey string) (map[string]any, error) {
@@ -179,10 +242,16 @@ func normalizeTikHubShop(payload any, operationKey string) (map[string]any, erro
 	if !ok {
 		return nil, tikHubContractMismatch()
 	}
-	if nested, exists := root["data"]; exists {
-		if data, valid := tikHubMap(nested); valid {
-			root = data
+	for depth := 0; depth < 3; depth++ {
+		nested, exists := root["data"]
+		if !exists {
+			break
 		}
+		data, valid := tikHubMap(nested)
+		if !valid {
+			break
+		}
+		root = data
 	}
 	switch operationKey {
 	case "commerce.product.search":
@@ -194,13 +263,13 @@ func normalizeTikHubShop(payload any, operationKey string) (map[string]any, erro
 		cursor := tikHubNestedValue(root, "load_more_params", "page_token")
 		return tikHubList(result, cursor, root["has_more"]), nil
 	case "commerce.product.get":
-		product, valid := tikHubFindEntity(root, "product_id", "productId")
+		product, valid := tikHubFindProduct(root)
 		if !valid {
 			return nil, tikHubContractMismatch()
 		}
 		return normalizeTikHubProduct(product)
 	case "commerce.product.reviews.list":
-		items, _ := tikHubFindArray(root, "reviews", "review_list", "comments")
+		items, _ := tikHubFindArray(root, "product_reviews", "reviews", "review_list", "comments")
 		result, err := normalizeTikHubReviews(items)
 		if err != nil {
 			return nil, err
@@ -236,7 +305,9 @@ func normalizeTikHubProduct(source map[string]any) (map[string]any, error) {
 	}
 	result := map[string]any{"id": id, "type": "product", "platform": "tiktok_shop"}
 	tikHubCopyString(result, "title", source, "title", "product_name", "name")
-	tikHubCopyString(result, "text", source, "description", "product_description")
+	if description, valid := tikHubProductDescription(tikHubFirstValue(source, "description", "product_description")); valid {
+		result["text"] = description
+	}
 	tikHubCopyString(result, "url", source, "seo_url", "product_url", "url")
 	if seller, valid := tikHubMap(tikHubFirstValue(source, "seller_info", "seller")); valid {
 		result["author"] = normalizeTikHubPublicIdentity(seller)
@@ -245,6 +316,11 @@ func normalizeTikHubProduct(source map[string]any) (map[string]any, error) {
 		result["media"] = media
 	}
 	metrics := map[string]any{}
+	for _, name := range []string{"rating", "review_count", "sold_count"} {
+		if value, exists := source[name]; exists {
+			metrics[name] = value
+		}
+	}
 	for _, containerName := range []string{"rate_info", "sold_info"} {
 		if container, valid := tikHubMap(source[containerName]); valid {
 			for _, name := range []string{"rating", "review_count", "sold_count"} {
@@ -263,6 +339,34 @@ func normalizeTikHubProduct(source map[string]any) (map[string]any, error) {
 	return result, nil
 }
 
+func tikHubProductDescription(value any) (string, bool) {
+	raw, ok := tikHubString(value)
+	if !ok {
+		return "", false
+	}
+	if !strings.HasPrefix(raw, "[") {
+		return raw, true
+	}
+	var blocks []map[string]any
+	if err := common.UnmarshalJsonStr(raw, &blocks); err != nil {
+		return raw, true
+	}
+	parts := make([]string, 0, len(blocks))
+	for _, block := range blocks {
+		if text, valid := tikHubString(block["text"]); valid {
+			parts = append(parts, text)
+		}
+		if items, valid := tikHubArray(block["content"]); valid {
+			for _, item := range items {
+				if text, itemValid := tikHubString(item); itemValid {
+					parts = append(parts, text)
+				}
+			}
+		}
+	}
+	return strings.Join(parts, "\n"), len(parts) > 0
+}
+
 func normalizeTikHubReviews(items []any) ([]any, error) {
 	result := make([]any, 0, len(items))
 	for _, raw := range items {
@@ -276,9 +380,16 @@ func normalizeTikHubReviews(items []any) ([]any, error) {
 		}
 		item := map[string]any{"id": id, "type": "review", "platform": "tiktok_shop"}
 		tikHubCopyString(item, "text", source, "content", "text", "review_text")
-		tikHubCopyString(item, "published_at", source, "create_time", "created_at")
+		if publishedAt, valid := tikHubTime(source, "review_time", "create_time", "created_at"); valid {
+			item["published_at"] = publishedAt
+		}
 		if author, valid := tikHubMap(tikHubFirstValue(source, "author", "user_info", "user")); valid {
 			item["author"] = normalizeTikHubPublicIdentity(author)
+		} else if authorID, valid := tikHubString(source["reviewer_id"]); valid {
+			author := map[string]any{"id": authorID}
+			tikHubCopyString(author, "display_name", source, "reviewer_name")
+			tikHubCopyString(author, "avatar_url", source, "reviewer_avatar_url")
+			item["author"] = author
 		}
 		if count, valid := tikHubCount(source["like_count"]); valid {
 			item["like_count"] = count
@@ -286,6 +397,46 @@ func normalizeTikHubReviews(items []any) ([]any, error) {
 		result = append(result, item)
 	}
 	return result, nil
+}
+
+func tikHubCopyCleanString(target map[string]any, targetName string, source map[string]any, sourceNames ...string) {
+	for _, sourceName := range sourceNames {
+		value, ok := tikHubString(source[sourceName])
+		if !ok {
+			continue
+		}
+		value = strings.ReplaceAll(value, `<em class="highlight">`, "")
+		value = strings.ReplaceAll(value, "</em>", "")
+		target[targetName] = html.UnescapeString(value)
+		return
+	}
+}
+
+func tikHubTime(source map[string]any, names ...string) (string, bool) {
+	value := tikHubFirstValue(source, names...)
+	if raw, ok := tikHubString(value); ok {
+		if unixValue, err := strconv.ParseInt(raw, 10, 64); err == nil {
+			if unixValue > 10_000_000_000 {
+				unixValue /= 1_000
+			}
+			return time.Unix(unixValue, 0).UTC().Format(time.RFC3339), true
+		}
+		return raw, true
+	}
+	return "", false
+}
+
+func tikHubTruthy(value any) bool {
+	switch typed := value.(type) {
+	case bool:
+		return typed
+	case float64:
+		return typed != 0
+	case string:
+		return typed != "" && typed != "0" && !strings.EqualFold(typed, "false")
+	default:
+		return false
+	}
 }
 
 func normalizeTikHubYouTubeAuthor(source, fallback map[string]any) map[string]any {
@@ -445,6 +596,63 @@ func tikHubFindEntity(source map[string]any, idNames ...string) (map[string]any,
 			if result, found := tikHubFindEntity(nested, idNames...); found {
 				return result, true
 			}
+			continue
+		}
+		if items, ok := tikHubArray(value); ok {
+			for _, item := range items {
+				if nested, valid := tikHubMap(item); valid {
+					if result, found := tikHubFindEntity(nested, idNames...); found {
+						return result, true
+					}
+				}
+			}
+		}
+	}
+	return nil, false
+}
+
+func tikHubFindProduct(source map[string]any) (map[string]any, bool) {
+	if product, valid := tikHubMap(source["product_model"]); valid {
+		if _, hasID := tikHubString(tikHubFirstValue(product, "product_id", "productId")); hasID {
+			merged := make(map[string]any, len(product)+4)
+			for name, value := range product {
+				merged[name] = value
+			}
+			if seller, exists := tikHubMap(source["seller_model"]); exists {
+				merged["seller_info"] = seller
+			}
+			if promotion, exists := tikHubMap(source["promotion_model"]); exists {
+				if price, priceExists := tikHubMap(tikHubNestedValue(promotion, "promotion_product_price", "min_price")); priceExists {
+					merged["product_price_info"] = price
+				}
+			}
+			if reviews, exists := tikHubMap(source["review_model"]); exists {
+				merged["rating"] = reviews["product_overall_score"]
+				merged["review_count"] = reviews["product_review_count"]
+			}
+			return merged, true
+		}
+	}
+	for _, value := range source {
+		if nested, valid := tikHubMap(value); valid {
+			if product, found := tikHubFindProduct(nested); found {
+				return product, true
+			}
+			continue
+		}
+		if items, valid := tikHubArray(value); valid {
+			for _, item := range items {
+				if nested, itemValid := tikHubMap(item); itemValid {
+					if product, found := tikHubFindProduct(nested); found {
+						return product, true
+					}
+				}
+			}
+		}
+	}
+	for _, name := range []string{"product_id", "productId"} {
+		if _, valid := tikHubString(source[name]); valid {
+			return source, true
 		}
 	}
 	return nil, false
@@ -455,7 +663,13 @@ func tikHubFirstMediaURL(value any) string {
 		return raw
 	}
 	if object, ok := tikHubMap(value); ok {
-		if raw, valid := tikHubString(tikHubFirstValue(object, "url", "uri")); valid {
+		if raw, valid := tikHubString(object["url"]); valid {
+			return raw
+		}
+		if raw := tikHubFirstMediaURL(object["url_list"]); raw != "" {
+			return raw
+		}
+		if raw, valid := tikHubString(object["uri"]); valid {
 			return raw
 		}
 	}
