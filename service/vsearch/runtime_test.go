@@ -1089,6 +1089,7 @@ func TestControlPlaneSyncCreatesDraftCapabilitiesFromStandardCatalog(t *testing.
 			assert.Equal(t, "CNY", binding.CostCurrency)
 			if verified {
 				assert.Positive(t, binding.UpstreamCostMicros)
+				assert.Equal(t, binding.UpstreamCostMicros, capability.UpstreamCostMicros, "verified upstream cost must not depend on catalog order")
 				assert.Equal(t, binding.UpstreamCostMicros, capability.PriceMicros, "verified ability must use the normalized upstream cost without markup")
 			}
 		}

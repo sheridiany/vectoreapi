@@ -378,6 +378,30 @@ func (control *ControlPlane) SyncCatalog(ctx context.Context) (SyncResult, error
 		}
 	}
 	sort.Strings(result.SyncedServiceIDs)
+	for _, publicID := range result.SyncedServiceIDs {
+		capability, getErr := model.GetSearchCapabilityByPublicID(publicID)
+		if getErr != nil {
+			result.Failures = append(result.Failures, publicID+"：标准能力读取失败")
+			continue
+		}
+		bindings, bindingErr := model.ListSearchCapabilityBindings(capability.Id, true)
+		if bindingErr != nil {
+			result.Failures = append(result.Failures, capability.Name+"：标准能力绑定读取失败")
+			continue
+		}
+		executableBindingIDs := make([]int, 0, len(bindings))
+		for _, binding := range bindings {
+			if model.IsSearchCapabilityBindingExecutable(capability.ContractVersion, binding) {
+				executableBindingIDs = append(executableBindingIDs, binding.Id)
+			}
+		}
+		if len(executableBindingIDs) == 0 {
+			continue
+		}
+		if priceErr := model.RefreshSearchCapabilityPriceFloorForBindings(capability.Id, executableBindingIDs); priceErr != nil {
+			result.Failures = append(result.Failures, capability.Name+"：上游成本刷新失败")
+		}
+	}
 	if result.Synced == 0 {
 		return result, &PublicError{Code: "CATALOG_SYNC_FAILED", Message: "没有同步到标准能力，请检查 TikHub 账号配置。", HTTPStatus: http.StatusBadGateway}
 	}
