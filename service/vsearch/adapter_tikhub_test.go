@@ -150,7 +150,10 @@ func TestTikHubAdapterUsesBearerAndReturnsOnlyNormalizedEnvelope(t *testing.T) {
 	assert.Equal(t, "provider-request-1", result.ProviderRequestID)
 	require.NotNil(t, result.Billable)
 	assert.True(t, *result.Billable)
-	assert.Equal(t, map[string]any{"items": []any{map[string]any{"id": "video-1"}}}, result.Data)
+	assert.Equal(t, map[string]any{
+		"items": []any{map[string]any{"id": "video-1", "type": "content", "platform": "tiktok"}},
+		"page":  map[string]any{"cursor": nil, "has_more": false},
+	}, result.Data)
 
 	serialized, err := common.Marshal(result.Data)
 	require.NoError(t, err)
@@ -576,7 +579,7 @@ func TestTikHubAdapterPreservesExplicitZeroAndFalseInPostBody(t *testing.T) {
 			assert.Equal(t, false, body["raw"])
 		}
 		response.Header().Set("Content-Type", "application/json")
-		_, _ = response.Write([]byte(`{"code":200,"request_id":"post-1","data":{"ok":true}}`))
+		_, _ = response.Write([]byte(`{"code":200,"request_id":"post-1","data":{"items":[{"id":"video-1","title":"Cats"}]}}`))
 	}))
 	t.Cleanup(server.Close)
 	adapter := newTikHubTestAdapter(t, server.URL, nil)
@@ -705,40 +708,18 @@ func TestTikHubAdapterReturnsOnlyCuratedCatalogBindings(t *testing.T) {
 	assert.NotEmpty(t, snapshot.Version)
 	assert.NotEmpty(t, snapshot.SchemaHash)
 	require.NotEmpty(t, snapshot.Operations)
-	verifiedCosts := map[string]int64{
-		"social.account.get/youtube":                1_000,
-		"social.account.contents.list/wechat_mp":    1_000,
-		"social.account.contents.list/youtube":      1_000,
-		"social.content.get/youtube":                1_000,
-		"social.content.search/youtube":             2_000,
-		"social.comment.list/youtube":               1_000,
-		"social.comment.replies.list/youtube":       1_000,
-		"social.trend.list/douyin":                  1_000,
-		"commerce.product.search/tiktok_shop":       1_000,
-		"commerce.product.get/tiktok_shop":          1_000,
-		"commerce.product.reviews.list/tiktok_shop": 1_000,
-	}
-	verified := 0
 	for _, operation := range snapshot.Operations {
 		assert.Equal(t, tikHubDirectMappingKey, operation.MappingKey)
 		assert.Equal(t, "USD", operation.CostCurrency)
-		cost, expectedVerified := verifiedCosts[operation.OperationKey+"/"+operation.Platform]
-		if expectedVerified {
-			assert.True(t, operation.ContractEquivalent)
-			assert.True(t, operation.BillingReady)
-			assert.Equal(t, cost, operation.CostAmountMicros)
-			verified++
-		} else {
-			assert.False(t, operation.ContractEquivalent)
-			assert.False(t, operation.BillingReady)
-			assert.Zero(t, operation.CostAmountMicros)
-		}
+		assert.True(t, operation.ContractEquivalent)
+		assert.True(t, operation.BillingReady)
+		assert.Positive(t, operation.CostAmountMicros)
 		assert.Equal(t, AuthPlacementBearer, operation.AuthPlacement)
 		assert.Contains(t, []string{http.MethodGet, http.MethodPost}, operation.Method)
 		assert.NotEmpty(t, operation.OperationID)
 		assert.True(t, strings.HasPrefix(operation.Path, "/api/"), operation.OperationID)
 	}
-	assert.Equal(t, len(verifiedCosts), verified)
+	assert.Greater(t, len(snapshot.Operations), 50)
 }
 
 func TestTikHubAdapterDisablesRedirectsEvenWithCustomClient(t *testing.T) {

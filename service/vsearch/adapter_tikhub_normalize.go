@@ -13,7 +13,7 @@ import (
 )
 
 func normalizeTikHubResult(data json.RawMessage, operation ProviderOperation) (map[string]any, error) {
-	if operation.OperationKey == "social.trend.list" {
+	if operation.OperationKey == "social.trend.list" && operation.Platform == "douyin" {
 		return normalizeTikHubTrendList(data, operation.Platform)
 	}
 	var payload any
@@ -23,17 +23,59 @@ func normalizeTikHubResult(data json.RawMessage, operation ProviderOperation) (m
 	switch operation.Platform {
 	case "youtube":
 		return normalizeTikHubYouTube(payload, operation.OperationKey)
+	case "xiaohongshu":
+		if operation.OperationKey == "commerce.product.search" {
+			return normalizeTikHubXHSProductSearch(payload, operation)
+		}
+		return normalizeTikHubGeneric(payload, operation)
 	case "wechat_mp":
-		return normalizeTikHubWeChat(payload, operation.OperationKey)
+		if operation.OperationKey == "social.content.search" || operation.OperationKey == "social.account.contents.list" {
+			return normalizeTikHubWeChat(payload, operation.OperationKey)
+		}
+		return normalizeTikHubGeneric(payload, operation)
 	case "tiktok_shop":
 		return normalizeTikHubShop(payload, operation.OperationKey)
 	default:
-		result, ok := payload.(map[string]any)
-		if !ok {
-			return nil, tikHubContractMismatch()
-		}
-		return result, nil
+		return normalizeTikHubGeneric(payload, operation)
 	}
+}
+
+func normalizeTikHubXHSProductSearch(payload any, operation ProviderOperation) (map[string]any, error) {
+	root, ok := tikHubMap(payload)
+	if !ok {
+		return nil, tikHubContractMismatch()
+	}
+	data, ok := tikHubMap(root["data"])
+	if !ok {
+		return nil, tikHubContractMismatch()
+	}
+	module, ok := tikHubMap(data["module"])
+	if !ok {
+		return nil, tikHubContractMismatch()
+	}
+	entries, ok := tikHubArray(module["data"])
+	if !ok {
+		return nil, tikHubContractMismatch()
+	}
+	items := make([]any, 0, len(entries))
+	for index, raw := range entries {
+		entry, valid := tikHubMap(raw)
+		if !valid {
+			continue
+		}
+		content, valid := tikHubMap(entry["content"])
+		if !valid {
+			continue
+		}
+		entity, valid := normalizeTikHubGenericEntity(content, operation.Platform, "product", index)
+		if valid {
+			items = append(items, entity)
+		}
+	}
+	if len(items) == 0 && len(entries) > 0 {
+		return nil, tikHubContractMismatch()
+	}
+	return tikHubList(items, root["search_id"], root["next_page"]), nil
 }
 
 func normalizeTikHubWeChat(payload any, operationKey string) (map[string]any, error) {

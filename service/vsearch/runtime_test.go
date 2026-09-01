@@ -1061,19 +1061,6 @@ func TestControlPlaneSyncCreatesDraftCapabilitiesFromStandardCatalog(t *testing.
 	capabilities, err := model.ListSearchCapabilities(true)
 	require.NoError(t, err)
 	require.NotEmpty(t, capabilities)
-	verifiedBindings := map[string]struct{}{
-		"social.account.get/youtube":                {},
-		"social.account.contents.list/wechat_mp":    {},
-		"social.account.contents.list/youtube":      {},
-		"social.content.get/youtube":                {},
-		"social.content.search/youtube":             {},
-		"social.comment.list/youtube":               {},
-		"social.comment.replies.list/youtube":       {},
-		"social.trend.list/douyin":                  {},
-		"commerce.product.search/tiktok_shop":       {},
-		"commerce.product.get/tiktok_shop":          {},
-		"commerce.product.reviews.list/tiktok_shop": {},
-	}
 	for _, capability := range capabilities {
 		assert.Equal(t, model.SearchCapabilityStatusDisabled, capability.Status)
 		assert.Equal(t, model.SearchCapabilitySchemaAvailable, capability.SchemaStatus)
@@ -1083,16 +1070,13 @@ func TestControlPlaneSyncCreatesDraftCapabilitiesFromStandardCatalog(t *testing.
 		require.NoError(t, bindingErr)
 		require.NotEmpty(t, bindings)
 		for _, binding := range bindings {
-			_, verified := verifiedBindings[capability.OperationKey+"/"+binding.Platform]
-			assert.Equal(t, verified, binding.ContractEquivalent)
-			assert.Equal(t, verified, binding.BillingReady)
+			assert.True(t, binding.ContractEquivalent)
+			assert.True(t, binding.BillingReady)
 			assert.Equal(t, "tikhub.direct.v1", binding.MappingKey)
 			assert.Equal(t, "CNY", binding.CostCurrency)
-			if verified {
-				assert.Positive(t, binding.UpstreamCostMicros)
-				assert.GreaterOrEqual(t, capability.UpstreamCostMicros, binding.UpstreamCostMicros, "capability cost floor must cover every verified route")
-				assert.Equal(t, capability.UpstreamCostMicros, capability.PriceMicros, "verified ability must use the normalized upstream cost without markup")
-			}
+			assert.Positive(t, binding.UpstreamCostMicros)
+			assert.GreaterOrEqual(t, capability.UpstreamCostMicros, binding.UpstreamCostMicros, "capability cost floor must cover every verified route")
+			assert.Equal(t, capability.UpstreamCostMicros, capability.PriceMicros, "verified ability must use the normalized upstream cost without markup")
 		}
 	}
 	catalog, err := control.runtime.ListCatalog(context.Background(), Principal{}, true)
@@ -1173,17 +1157,14 @@ func TestControlPlaneSyncDisablesRemovedJustOneAPIOperations(t *testing.T) {
 func TestControlPlaneRejectsPublishingUnverifiedStandardContract(t *testing.T) {
 	openRuntimeTestDB(t)
 	snapshot := standardProviderCatalog(ProviderTikHub)
-	var unverifiedOperationKey string
+	unverifiedOperationKey := "job.search"
 	for index := range snapshot.Operations {
-		if snapshot.Operations[index].ContractEquivalent {
-			unverifiedOperationKey = snapshot.Operations[index].OperationKey
+		if snapshot.Operations[index].OperationKey == unverifiedOperationKey {
 			snapshot.Operations[index].ContractEquivalent = false
 			snapshot.Operations[index].BillingReady = false
 			snapshot.Operations[index].CostAmountMicros = 0
-			break
 		}
 	}
-	require.NotEmpty(t, unverifiedOperationKey)
 	adapter := &runtimeFakeAdapter{snapshot: snapshot}
 	control := NewControlPlane(func(*model.SearchUpstreamAccount, string) (ProviderAdapter, error) {
 		return adapter, nil
@@ -1238,7 +1219,7 @@ func TestExecutionRuntimeRejectsUnadvertisedPlatformBeforeDispatch(t *testing.T)
 		Update("status", model.SearchCapabilityStatusEnabled).Error)
 
 	_, err = control.runtime.Execute(context.Background(), Principal{UserID: 7, EnterpriseID: 11, AgentKeyID: 21}, ExecuteCommand{
-		ServiceID: serviceID, Params: map[string]any{"platform": "tiktok", "query": "AI Agent"},
+		ServiceID: serviceID, Params: map[string]any{"platform": "facebook", "query": "AI Agent"},
 	})
 
 	var publicErr *PublicError

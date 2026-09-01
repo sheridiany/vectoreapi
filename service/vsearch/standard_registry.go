@@ -75,7 +75,7 @@ func mappingKeyForProvider(provider string) string {
 	}
 }
 
-func standardCapabilityRegistry() []standardCapabilityDefinition {
+func legacyStandardCapabilityRegistry() []standardCapabilityDefinition {
 	accountOutput := entityOutputSchema("account")
 	contentOutput := entityOutputSchema("content")
 	commentListOutput := listOutputSchema("comment")
@@ -243,6 +243,12 @@ func verifiedProviderPOST(operationKey, platform, operationID, path string, para
 	operation.CostAmountMicros = costAmountMicros
 	operation.ContractEquivalent = true
 	operation.BillingReady = true
+	return operation
+}
+
+func verifiedProviderPOSTQuery(operationKey, platform, operationID, path string, parameterMap map[string]string, fixedParams map[string]any, outputSchema map[string]any, costAmountMicros int64) ProviderOperation {
+	operation := verifiedProviderPOST(operationKey, platform, operationID, path, parameterMap, fixedParams, outputSchema, costAmountMicros)
+	operation.MappingVersion = "v1-query"
 	return operation
 }
 

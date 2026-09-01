@@ -108,7 +108,7 @@ func (a *TikHubAdapter) Probe(ctx context.Context) (AccountState, error) {
 	operationContext, cancel := context.WithTimeout(ctx, a.timeout)
 	defer cancel()
 
-	request, err := a.newRequest(operationContext, http.MethodGet, tikHubUserInfoPath, nil)
+	request, err := a.newRequest(operationContext, http.MethodGet, tikHubUserInfoPath, nil, false)
 	if err != nil {
 		return AccountState{}, err
 	}
@@ -176,7 +176,7 @@ func (a *TikHubAdapter) Execute(ctx context.Context, operation ProviderOperation
 
 	operationContext, cancel := context.WithTimeout(ctx, a.timeout)
 	defer cancel()
-	request, err := a.newRequest(operationContext, operation.Method, operation.Path, providerParams)
+	request, err := a.newRequest(operationContext, operation.Method, operation.Path, providerParams, operation.MappingVersion == "v1-query")
 	if err != nil {
 		return result, err
 	}
@@ -330,8 +330,7 @@ func validateTikHubOperation(operation ProviderOperation, request CanonicalReque
 	if strings.TrimSpace(operation.MappingKey) != tikHubDirectMappingKey || strings.TrimSpace(operation.MappingVersion) == "" {
 		return newConnectorError("UPSTREAM_BINDING_INVALID", http.StatusInternalServerError, "上游能力绑定无效。")
 	}
-	if operation.OperationKey == "social.trend.list" &&
-		(operation.ContractVersion != "v1" || !strings.EqualFold(operation.Platform, "douyin")) {
+	if operation.OperationKey == "social.trend.list" && operation.ContractVersion != "v1" {
 		return newConnectorError("UPSTREAM_BINDING_INVALID", http.StatusInternalServerError, "上游能力绑定无效。")
 	}
 	if operation.AuthPlacement != "" && operation.AuthPlacement != AuthPlacementBearer {
@@ -389,13 +388,13 @@ func mapTikHubParams(operation ProviderOperation, request CanonicalRequest) (map
 	return providerParams, nil
 }
 
-func (a *TikHubAdapter) newRequest(ctx context.Context, method string, operationPath string, params map[string]any) (*http.Request, error) {
+func (a *TikHubAdapter) newRequest(ctx context.Context, method string, operationPath string, params map[string]any, paramsInQuery bool) (*http.Request, error) {
 	endpoint := *a.baseURL
 	endpoint.Path = strings.TrimRight(endpoint.Path, "/") + operationPath
 	endpoint.RawPath = ""
 
 	var body io.Reader
-	if method == http.MethodGet {
+	if method == http.MethodGet || paramsInQuery {
 		query := endpoint.Query()
 		for name, value := range params {
 			encoded, err := tikHubQueryValue(value)

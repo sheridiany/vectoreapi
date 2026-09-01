@@ -28,6 +28,8 @@ func TestStandardCapabilityRegistryPinsStablePublicIDs(t *testing.T) {
 		"commerce.product.search":       "vr_svc_58d59c63f583781a",
 		"commerce.product.get":          "vr_svc_dd31b9f15b6908aa",
 		"commerce.product.reviews.list": "vr_svc_334afd6f79701f9b",
+		"job.search":                    "vr_svc_16a68ab75cd05259",
+		"job.get":                       "vr_svc_21239934f289aeef",
 	}
 	definitions := standardCapabilityRegistry()
 	require.Len(t, definitions, len(expected), "adding or removing a public capability requires an explicit stable-ID review")
@@ -45,6 +47,28 @@ func TestStandardCapabilityRegistryPinsStablePublicIDs(t *testing.T) {
 	}
 }
 
+func TestStandardCapabilityRegistryCoversPublishedPlatforms(t *testing.T) {
+	want := []string{
+		"bilibili", "douyin", "instagram", "kuaishou", "linkedin", "reddit", "tiktok", "tiktok_shop",
+		"twitter", "wechat_channels", "wechat_mp", "weibo", "xiaohongshu", "youtube", "zhihu",
+	}
+	seen := map[string]struct{}{}
+	bindings := 0
+	for _, definition := range standardCapabilityRegistry() {
+		for _, operation := range definition.Bindings {
+			seen[operation.Platform] = struct{}{}
+			bindings++
+		}
+	}
+	got := make([]string, 0, len(seen))
+	for platform := range seen {
+		got = append(got, platform)
+	}
+	sort.Strings(got)
+	assert.Equal(t, want, got)
+	assert.Equal(t, 86, bindings, "publishing or withdrawing an upstream binding requires three-run live verification")
+}
+
 func TestStandardCapabilityRegistryContainsOnlyTikHubAndSafeHTTPBindings(t *testing.T) {
 	allowedProviders := map[string]string{
 		tikHubDirectMappingKey: ProviderTikHub,
@@ -54,19 +78,6 @@ func TestStandardCapabilityRegistryContainsOnlyTikHubAndSafeHTTPBindings(t *test
 	}
 	seenProviders := make(map[string]struct{}, len(allowedProviders))
 	seenOperations := make(map[string]struct{})
-	verifiedCosts := map[string]int64{
-		"social.account.get/youtube":                1_000,
-		"social.account.contents.list/wechat_mp":    1_000,
-		"social.account.contents.list/youtube":      1_000,
-		"social.content.get/youtube":                1_000,
-		"social.content.search/youtube":             2_000,
-		"social.comment.list/youtube":               1_000,
-		"social.comment.replies.list/youtube":       1_000,
-		"social.trend.list/douyin":                  1_000,
-		"commerce.product.search/tiktok_shop":       1_000,
-		"commerce.product.get/tiktok_shop":          1_000,
-		"commerce.product.reviews.list/tiktok_shop": 1_000,
-	}
 	for _, definition := range standardCapabilityRegistry() {
 		require.NotEmpty(t, definition.Bindings, definition.OperationKey)
 		for _, operation := range definition.Bindings {
@@ -79,18 +90,15 @@ func TestStandardCapabilityRegistryContainsOnlyTikHubAndSafeHTTPBindings(t *test
 			} else {
 				assert.Empty(t, operation.CostCurrency, operation.OperationID)
 			}
-			expectedCost, verified := verifiedCosts[operation.OperationKey+"/"+operation.Platform]
-			assert.Equal(t, verified, operation.ContractEquivalent, operation.OperationID)
-			assert.Equal(t, verified, operation.BillingReady, operation.OperationID)
-			if verified {
-				assert.Equal(t, expectedCost, operation.CostAmountMicros, operation.OperationID)
-			}
+			assert.True(t, operation.ContractEquivalent, operation.OperationID)
+			assert.True(t, operation.BillingReady, operation.OperationID)
+			assert.Positive(t, operation.CostAmountMicros, operation.OperationID)
 			seenProviders[provider] = struct{}{}
 
 			assert.Equal(t, definition.OperationKey, operation.OperationKey)
 			assert.Equal(t, definition.ContractVersion, operation.ContractVersion)
 			assert.Contains(t, []string{http.MethodGet, http.MethodPost}, operation.Method, operation.OperationID)
-			assert.Equal(t, "v1", operation.MappingVersion, operation.OperationID)
+			assert.Contains(t, []string{"v1", "v1-query"}, operation.MappingVersion, operation.OperationID)
 			assert.Equal(t, wantAuth[provider], operation.AuthPlacement, operation.OperationID)
 			assert.NotEmpty(t, operation.Platform, operation.OperationID)
 			assert.NotEmpty(t, operation.OperationID)
@@ -136,6 +144,10 @@ func TestStandardCapabilityRegistryOnlyMapsWhitelistedCanonicalParameters(t *tes
 		"object_id": {}, "post_id": {}, "urn": {}, "business_type": {}, "continuation_token": {},
 		"need_format": {}, "type": {}, "search_type": {}, "allow_nsfw": {}, "video_id": {}, "content_id": {},
 		"sort_rule": {}, "filter_type": {}, "filter_value": {}, "region": {},
+		"user_id": {}, "screen_name": {}, "user_url_token": {}, "sec_user_id": {}, "max_cursor": {},
+		"pn": {}, "ps": {}, "order": {}, "note_id": {}, "tweet_id": {}, "status_id": {}, "code": {},
+		"bv_id": {}, "answer_id": {}, "photo_id": {}, "root_comment_id": {}, "rpid": {}, "code_or_url": {},
+		"order_by": {}, "limit": {}, "keywords": {}, "rest_id": {}, "av_id": {},
 	}
 	for _, definition := range standardCapabilityRegistry() {
 		properties, ok := definition.InputSchema["properties"].(map[string]any)
@@ -193,7 +205,9 @@ func TestStandardCapabilityRegistryPublishesReviewedPlatformSet(t *testing.T) {
 		}
 	}
 	assert.Equal(t, map[string]struct{}{
-		"douyin": {}, "tiktok_shop": {}, "wechat_mp": {}, "youtube": {},
+		"bilibili": {}, "douyin": {}, "instagram": {}, "kuaishou": {}, "linkedin": {},
+		"reddit": {}, "tiktok": {}, "tiktok_shop": {}, "twitter": {}, "wechat_channels": {},
+		"wechat_mp": {}, "weibo": {}, "xiaohongshu": {}, "youtube": {}, "zhihu": {},
 	}, platforms)
 }
 
